@@ -47,6 +47,10 @@ def init_db(conn: sqlite3.Connection):
             days_on_zillow INTEGER,
             scraped_at TEXT,
             search_name TEXT,
+            tax_assessed_value REAL,
+            annual_tax REAL,
+            hoa_fee REAL,
+            annual_homeowners_insurance REAL,
             updated_at TEXT DEFAULT (datetime('now'))
         );
 
@@ -66,12 +70,18 @@ def init_db(conn: sqlite3.Connection):
             ON zip_districts(school_district);
     """)
     conn.commit()
-    # Migration: add search_name to existing databases
-    try:
-        conn.execute("ALTER TABLE properties ADD COLUMN search_name TEXT")
-        conn.commit()
-    except sqlite3.OperationalError:
-        pass  # column already exists
+    for col, typedef in [
+        ("search_name", "TEXT"),
+        ("tax_assessed_value", "REAL"),
+        ("annual_tax", "REAL"),
+        ("hoa_fee", "REAL"),
+        ("annual_homeowners_insurance", "REAL"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE properties ADD COLUMN {col} {typedef}")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # column already exists
 
 
 def load_district_data(conn: sqlite3.Connection):
@@ -201,9 +211,11 @@ def load_enrichment_data(conn: sqlite3.Connection, properties: list) -> None:
 
     zpids = [p.zpid for p in properties]
     placeholders = ",".join("?" * len(zpids))
+    _ENRICH_FIELDS = "zpid, address, rent_zestimate, zestimate, year_built, lot_sqft, sqft, " \
+                     "bathrooms, property_type, annual_tax, hoa_fee, annual_homeowners_insurance"
+
     rows = conn.execute(
-        f"""SELECT zpid, address, rent_zestimate, zestimate, year_built, lot_sqft, sqft,
-                   bathrooms, property_type
+        f"""SELECT {_ENRICH_FIELDS}
             FROM properties
             WHERE zpid IN ({placeholders})
               AND (rent_zestimate IS NOT NULL OR property_type IS NOT NULL)""",
@@ -217,8 +229,7 @@ def load_enrichment_data(conn: sqlite3.Connection, properties: list) -> None:
     if missing_addresses:
         addr_placeholders = ",".join("?" * len(missing_addresses))
         addr_rows = conn.execute(
-            f"""SELECT zpid, address, rent_zestimate, zestimate, year_built, lot_sqft, sqft,
-                       bathrooms, property_type
+            f"""SELECT {_ENRICH_FIELDS}
                 FROM properties
                 WHERE address IN ({addr_placeholders})
                   AND (rent_zestimate IS NOT NULL OR property_type IS NOT NULL)""",
@@ -242,6 +253,12 @@ def load_enrichment_data(conn: sqlite3.Connection, properties: list) -> None:
             prop.sqft = existing["sqft"]
         if not prop.bathrooms and existing.get("bathrooms"):
             prop.bathrooms = existing["bathrooms"]
+        if not prop.annual_tax and existing.get("annual_tax"):
+            prop.annual_tax = existing["annual_tax"]
+        if not prop.hoa_fee and existing.get("hoa_fee"):
+            prop.hoa_fee = existing["hoa_fee"]
+        if not prop.annual_homeowners_insurance and existing.get("annual_homeowners_insurance"):
+            prop.annual_homeowners_insurance = existing["annual_homeowners_insurance"]
         # Prefer enriched property_type over the generic search result type
         if existing.get("property_type") and existing["property_type"] != prop.property_type:
             prop.property_type = existing["property_type"]

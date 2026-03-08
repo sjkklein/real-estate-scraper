@@ -54,6 +54,10 @@ class Property:
     days_on_zillow: Optional[int] = None
     scraped_at: str = ""
     search_name: Optional[str] = None
+    tax_assessed_value: Optional[float] = None
+    annual_tax: Optional[float] = None
+    hoa_fee: Optional[float] = None
+    annual_homeowners_insurance: Optional[float] = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -305,7 +309,13 @@ class ZillowScraper:
         # Determine listing type from status or URL
         status = result.get("statusType", "").lower()
         detail_url = result.get("detailUrl", "")
-        if "rent" in status or "for_rent" in status or "/homedetails/" not in str(detail_url):
+        home_status = result.get("hdpData", {}).get("homeInfo", {}).get("homeStatus", "").upper() \
+                      if result.get("hdpData") else ""
+        # Builder/new-construction listings have "FOR_SALE" homeStatus even when scraped
+        # from a rental search URL — detect them by status field before falling back to URL.
+        if "for_sale" in status or home_status in ("FOR_SALE", "NEW_CONSTRUCTION"):
+            listing_type = "sale"
+        elif "rent" in status or "for_rent" in status or "/homedetails/" not in str(detail_url):
             listing_type = "rent"
         else:
             listing_type = "sale"
@@ -366,6 +376,9 @@ class ZillowScraper:
         # Year built
         year_built = hd_data.get("yearBuilt") or result.get("yearBuilt")
 
+        # Tax assessed value — available in homeInfo from search results
+        tax_assessed_value = hd_data.get("taxAssessedValue") or result.get("taxAssessedValue")
+
         lat = result.get("latLong", {}).get("latitude") or hd_data.get("latitude") or result.get("latitude")
         lng = result.get("latLong", {}).get("longitude") or hd_data.get("longitude") or result.get("longitude")
 
@@ -422,6 +435,7 @@ class ZillowScraper:
             detail_url=detail_url,
             days_on_zillow=days_on_zillow,
             scraped_at=timestamp,
+            tax_assessed_value=tax_assessed_value,
         )
 
     def scrape_property_detail(self, url: str) -> dict:
@@ -464,7 +478,9 @@ class ZillowScraper:
                         prop_data = inner["property"]
                         # Merge resoFacts fields so callers can access them at top level
                         reso = prop_data.get("resoFacts") or {}
-                        for field in ("yearBuilt", "lotSize", "livingArea", "bathrooms", "bathroomsFloat"):
+                        for field in ("yearBuilt", "lotSize", "livingArea", "bathrooms",
+                                      "bathroomsFloat", "taxAnnualAmount", "hoaFee",
+                                      "annualHomeownersInsurance"):
                             if field not in prop_data or prop_data[field] is None:
                                 if reso.get(field) is not None:
                                     prop_data[field] = reso[field]
@@ -532,6 +548,12 @@ class ZillowScraper:
                     prop.sqft = detail["livingArea"]
                 if detail.get("bathrooms") and not prop.bathrooms:
                     prop.bathrooms = detail["bathrooms"]
+                if detail.get("taxAnnualAmount") and not prop.annual_tax:
+                    prop.annual_tax = detail["taxAnnualAmount"]
+                if detail.get("hoaFee") and not prop.hoa_fee:
+                    prop.hoa_fee = detail["hoaFee"]
+                if detail.get("annualHomeownersInsurance") and not prop.annual_homeowners_insurance:
+                    prop.annual_homeowners_insurance = detail["annualHomeownersInsurance"]
 
                 if on_enrich:
                     on_enrich(prop)
@@ -623,6 +645,12 @@ class ZillowScraper:
                         prop.sqft = detail["livingArea"]
                     if detail.get("yearBuilt") and not prop.year_built:
                         prop.year_built = detail["yearBuilt"]
+                    if detail.get("taxAnnualAmount") and not prop.annual_tax:
+                        prop.annual_tax = detail["taxAnnualAmount"]
+                    if detail.get("hoaFee") and not prop.hoa_fee:
+                        prop.hoa_fee = detail["hoaFee"]
+                    if detail.get("annualHomeownersInsurance") and not prop.annual_homeowners_insurance:
+                        prop.annual_homeowners_insurance = detail["annualHomeownersInsurance"]
 
                     if on_enrich:
                         on_enrich(prop)

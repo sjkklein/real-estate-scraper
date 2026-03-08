@@ -145,6 +145,22 @@ def cmd_scrape_all(args):
         print()
 
 
+def cmd_analyze_rents(args):
+    """Train OLS rent model and estimate rent for all sale listings."""
+    from scraper.db import get_connection, init_db
+    from analysis.rent_model import run as run_model
+
+    conn = get_connection()
+    init_db(conn)
+    try:
+        summary = run_model(conn)
+        print(f"\nModel '{args.model}': trained on {summary['trained_on']} rentals, "
+              f"MAE ${summary['mae']:,.0f}/mo, R² {summary['r2']:.3f}, "
+              f"{summary['predicted']} sale listings estimated.")
+    finally:
+        conn.close()
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Zillow scraper for rental investment analysis"
@@ -202,6 +218,11 @@ def main():
         help="Override filter-rentals setting for all searches"
     )
     p_scrape_all.set_defaults(func=cmd_scrape_all)
+
+    # --- analyze-rents ---
+    p_ar = subparsers.add_parser("analyze-rents", help="Estimate rent for sale listings using OLS model")
+    p_ar.add_argument("--model", default="ols_v1", help="Model name tag stored in rent_estimates (default: ols_v1)")
+    p_ar.set_defaults(func=cmd_analyze_rents)
 
     # --- stats ---
     p_stats = subparsers.add_parser("stats", help="Show database statistics")
