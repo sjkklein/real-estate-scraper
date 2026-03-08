@@ -6,6 +6,7 @@ import json
 import random
 import re
 import time
+import urllib.parse
 from dataclasses import dataclass, field, asdict
 from typing import Optional, Tuple, List
 
@@ -52,6 +53,7 @@ class Property:
     detail_url: Optional[str] = None
     days_on_zillow: Optional[int] = None
     scraped_at: str = ""
+    search_name: Optional[str] = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -93,29 +95,22 @@ class ZillowScraper:
         delay = random.uniform(*self.delay)
         time.sleep(delay)
 
-    def _search_url(self, location: str, listing_type: str, page: int = 1) -> str:
-        """Build a Zillow search URL.
+    def _search_url(self, location: str, listing_type: str) -> str:
+        """Build a Zillow search URL (page 1 only).
 
         Args:
             location: city-state slug, e.g. "austin-tx" or zip code
             listing_type: "sale" or "rent"
-            page: page number (1-indexed)
         """
         if listing_type == "rent":
-            suffix = "rentals"
-        else:
-            suffix = ""
+            return f"{BASE_URL}/{location}/rentals/"
+        return f"{BASE_URL}/{location}/"
 
-        url = f"{BASE_URL}/{location}/{suffix}" if suffix else f"{BASE_URL}/{location}/"
-        if page > 1:
-            url += f"{page}_p/"
-        return url
-
-    def scrape_search_page(self, url: str) -> tuple[list[Property], int]:
+    def scrape_search_page(self, url: str) -> tuple[list[Property], int, str | None]:
         """Scrape a single Zillow search results page.
 
         Returns:
-            Tuple of (list of Property objects, total result count).
+            Tuple of (list of Property objects, total result count, next page URL or None).
         """
         self._ensure_session()
         self._throttle()
@@ -126,40 +121,48 @@ class ZillowScraper:
 
         soup = BeautifulSoup(resp.text, "lxml")
 
-        # Zillow embeds search data in a <script id="__NEXT_DATA__"> tag
         script_tag = soup.find("script", {"id": "__NEXT_DATA__"})
         if not script_tag:
             print(f"[WARN] No __NEXT_DATA__ found at {url}")
             print(f"[DEBUG] Response status: {resp.status_code}, length: {len(resp.text)}")
-            return [], 0
+            return [], 0, None
 
         try:
             data = json.loads(script_tag.string)
         except (json.JSONDecodeError, TypeError) as e:
             print(f"[WARN] Failed to parse __NEXT_DATA__: {e}")
-            return [], 0
+            return [], 0, None
 
-        # Save raw JSON for debugging when SAVE_RAW env var is set
+        self._save_raw_debug(data, url)
+
+        properties, total_count, next_url = self._parse_search_data(data, url)
+        return properties, total_count, next_url
+
+    def _save_raw_debug(self, data: dict, label: str, force: bool = False):
+        """Save raw JSON for debugging. Always saves on errors; requires SAVE_RAW env var otherwise."""
         import os
-        if os.environ.get("SAVE_RAW"):
-            from pathlib import Path
-            raw_dir = Path(__file__).parent.parent / "data" / "raw"
-            raw_dir.mkdir(parents=True, exist_ok=True)
-            slug = url.replace("https://www.zillow.com/", "").replace("/", "_").rstrip("_")
-            with open(raw_dir / f"{slug}.json", "w") as f:
-                json.dump(data, f, indent=2, default=str)
+        if not force and not os.environ.get("SAVE_RAW"):
+            return
+        from pathlib import Path
+        raw_dir = Path(__file__).parent.parent / "data" / "raw"
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        slug = label.replace("https://www.zillow.com/", "").replace("/", "_").rstrip("_")
+        slug = slug[:120]  # cap length
+        path = raw_dir / f"{slug}.json"
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2, default=str)
+        print(f"[DEBUG] Saved raw response to {path}")
 
-        return self._parse_search_data(data, url)
-
-    def _parse_search_data(self, data: dict, url: str = "") -> tuple[list[Property], int]:
+    def _parse_search_data(self, data: dict, url: str = "") -> tuple[list[Property], int, str | None]:
         """Extract property listings from Zillow's __NEXT_DATA__ JSON."""
         properties = []
         total_count = 0
+        next_url = None
 
         try:
             # Navigate the nested JSON structure to find search results
             query_data = data.get("props", {}).get("pageProps", {})
-            search_data = query_data.get("searchPageState", {})
+            search_data = query_data.get("searchPageState") or {}
 
             # Zillow uses cat1 for sale results and cat2 for rental results.
             # Try all categories and pick the one with actual results.
@@ -167,21 +170,40 @@ class ZillowScraper:
             total_count = 0
             is_rental = "rental" in url.lower()
 
+            # Also check categoryTotals as a fallback for total count
+            category_totals = search_data.get("categoryTotals", {})
+
             for cat_name in (["cat2", "cat1"] if is_rental else ["cat1", "cat2"]):
                 cat = search_data.get(cat_name, {})
                 sr = cat.get("searchResults", {})
+                sl = cat.get("searchList", {})
                 lr = sr.get("listResults", [])
                 mr = sr.get("mapResults", [])
-                tc = sr.get("totalResultCount", 0)
+
+                # totalResultCount can be in searchList, searchResults, or categoryTotals
+                tc = (
+                    sl.get("totalResultCount")
+                    or sr.get("totalResultCount")
+                    or category_totals.get(cat_name, {}).get("totalResultCount")
+                    or 0
+                )
+
+                # Extract next page URL from pagination
+                pagination = sl.get("pagination") or {}
+                raw_next = pagination.get("nextUrl")
+                if raw_next:
+                    next_url = BASE_URL + raw_next if raw_next.startswith("/") else raw_next
 
                 if lr or mr:
                     best_results = lr or mr
                     total_count = tc
                     break
 
-        except (AttributeError, TypeError):
-            print("[WARN] Unexpected JSON structure in search data")
-            return [], 0
+        except (AttributeError, TypeError) as e:
+            top_keys = list(data.get("props", {}).get("pageProps", {}).keys()) if isinstance(data, dict) else []
+            print(f"[WARN] Unexpected JSON structure in search data ({e}); pageProps keys: {top_keys}")
+            self._save_raw_debug(data, url + "_error", force=True)
+            return [], 0, None
 
         all_results = best_results
 
@@ -212,7 +234,7 @@ class ZillowScraper:
                 zpid = result.get("zpid", "unknown")
                 print(f"[WARN] Failed to parse listing {zpid}: {e}")
 
-        return properties, total_count
+        return properties, total_count, next_url
 
     def _parse_listing(self, result: dict, timestamp: str) -> Optional[Property]:
         """Parse a single listing result into a Property."""
@@ -439,25 +461,47 @@ class ZillowScraper:
                     if isinstance(inner, str):
                         inner = json.loads(inner)
                     if isinstance(inner, dict) and "property" in inner:
-                        return inner["property"]
+                        prop_data = inner["property"]
+                        # Merge resoFacts fields so callers can access them at top level
+                        reso = prop_data.get("resoFacts") or {}
+                        for field in ("yearBuilt", "lotSize", "livingArea", "bathrooms", "bathroomsFloat"):
+                            if field not in prop_data or prop_data[field] is None:
+                                if reso.get(field) is not None:
+                                    prop_data[field] = reso[field]
+                        if "bathroomsFloat" in prop_data and prop_data.get("bathrooms") is None:
+                            prop_data["bathrooms"] = prop_data["bathroomsFloat"]
+                        return prop_data
         except Exception:
             pass
 
         return {}
 
-    def enrich_properties(self, properties: list[Property]) -> list[Property]:
+    def enrich_properties(
+        self,
+        properties: list[Property],
+        skip_addresses: set[str] | None = None,
+        on_enrich=None,
+    ) -> list[Property]:
         """Fetch detail pages for properties missing data.
 
         Fills in rent Zestimates, year built, and other detail-page-only fields.
         Uses exponential backoff on 403s and creates a fresh HTTP client after
         rate limiting to get a new session.
+
+        Args:
+            properties: List of Property objects to enrich.
+            skip_addresses: Set of addresses to skip (e.g. recently updated).
         """
-        missing = [p for p in properties if not p.rent_zestimate and p.detail_url]
+        skip_addresses = skip_addresses or set()
+        missing = [
+            p for p in properties
+            if p.detail_url and p.address not in skip_addresses
+        ]
         if not missing:
-            print("[*] All properties already have rent Zestimates.")
+            print("[*] All properties already have full detail data.")
             return properties
 
-        print(f"[*] Enriching {len(missing)} properties missing rent Zestimates...")
+        print(f"[*] Enriching {len(missing)} properties with detail data (rent Zestimate, year built, sqft, etc.)...")
         original_delay = self.delay
         consecutive_403s = 0
         base_delay = 10  # start at 10s between detail page requests
@@ -489,6 +533,9 @@ class ZillowScraper:
                 if detail.get("bathrooms") and not prop.bathrooms:
                     prop.bathrooms = detail["bathrooms"]
 
+                if on_enrich:
+                    on_enrich(prop)
+
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 403:
                     consecutive_403s += 1
@@ -511,50 +558,227 @@ class ZillowScraper:
 
         self.delay = original_delay
         enriched = sum(1 for p in properties if p.rent_zestimate)
-        print(f"[*] {enriched}/{len(properties)} properties now have rent Zestimates")
+        with_year = sum(1 for p in properties if p.year_built)
+        print(f"[*] Enrichment complete: {enriched}/{len(properties)} have rent Zestimate, {with_year}/{len(properties)} have year built")
         return properties
+
+    # Property types considered SFH/duplex (i.e. not large apartment complexes)
+    SFH_TYPES = {"SINGLE_FAMILY", "DUPLEX", "TOWNHOUSE", "MANUFACTURED", "LOT"}
+
+    def enrich_and_filter_rentals(
+        self,
+        properties: list[Property],
+        skip_addresses: set[str] | None = None,
+        on_enrich=None,
+    ) -> list[Property]:
+        """Enrich rental listings with detail page data to get accurate property types,
+        then filter to keep only single-family homes and duplexes.
+
+        Args:
+            properties: List of rental Property objects.
+            skip_addresses: Set of addresses to skip (already have accurate property_type in DB).
+
+        Returns:
+            Filtered list containing only SFH/duplex rentals.
+        """
+        skip_addresses = skip_addresses or set()
+
+        # Properties that already have a known good type (from DB pre-load) can be filtered immediately
+        already_typed = [p for p in properties if p.address in skip_addresses]
+        needs_enrichment = [
+            p for p in properties
+            if p.address not in skip_addresses and p.detail_url
+        ]
+
+        if not needs_enrichment:
+            print("[*] All rental properties already have property type data.")
+        else:
+            print(f"[*] Enriching {len(needs_enrichment)} rentals to get property types...")
+            original_delay = self.delay
+            consecutive_403s = 0
+            base_delay = 10
+
+            for i, prop in enumerate(needs_enrichment):
+                current_delay = base_delay * (2 ** consecutive_403s)
+                current_delay = min(current_delay, 120)
+                self.delay = (current_delay, current_delay + 30)
+
+                print(f"[*] Detail {i+1}/{len(needs_enrichment)}: {prop.address} (delay ~{current_delay:.0f}s)")
+                try:
+                    detail = self.scrape_property_detail(prop.detail_url)
+                    consecutive_403s = 0
+
+                    if not detail:
+                        continue
+
+                    if detail.get("homeType"):
+                        prop.property_type = detail["homeType"]
+                    if detail.get("rentZestimate") and not prop.rent_zestimate:
+                        prop.rent_zestimate = detail["rentZestimate"]
+                    if detail.get("bedrooms") and not prop.bedrooms:
+                        prop.bedrooms = detail["bedrooms"]
+                    if detail.get("bathrooms") and not prop.bathrooms:
+                        prop.bathrooms = detail["bathrooms"]
+                    if detail.get("livingArea") and not prop.sqft:
+                        prop.sqft = detail["livingArea"]
+                    if detail.get("yearBuilt") and not prop.year_built:
+                        prop.year_built = detail["yearBuilt"]
+
+                    if on_enrich:
+                        on_enrich(prop)
+
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code == 403:
+                        consecutive_403s += 1
+                        if consecutive_403s >= 3:
+                            print(f"[WARN] 3 consecutive 403s — stopping enrichment.")
+                            break
+                        print(f"[WARN] 403 — backing off (attempt {consecutive_403s}/3)")
+                        self.client.close()
+                        self.client = httpx.Client(
+                            headers=self._base_headers(),
+                            follow_redirects=True,
+                            timeout=30.0,
+                        )
+                        self._initialized = False
+                    else:
+                        print(f"[WARN] HTTP {e.response.status_code} for {prop.detail_url}")
+                except Exception as e:
+                    print(f"[WARN] Failed to enrich {prop.zpid}: {e}")
+
+            self.delay = original_delay
+
+        all_props = already_typed + needs_enrichment
+        kept = [p for p in all_props if p.property_type in self.SFH_TYPES]
+        excluded = len(all_props) - len(kept)
+
+        type_counts = {}
+        for p in all_props:
+            t = p.property_type or "(unknown)"
+            type_counts[t] = type_counts.get(t, 0) + 1
+
+        print(f"[*] Rental property types: {type_counts}")
+        print(f"[*] Kept {len(kept)} SFH/duplex rentals, excluded {excluded}")
+        return kept
+
+    def _construct_next_searchquery_url(self, base_url: str, page: int) -> Optional[str]:
+        """Build a page-N URL for searchQueryState-based Zillow URLs.
+
+        Zillow encodes all search parameters (including pagination) as JSON in the
+        `searchQueryState` query param.  We update `pagination.currentPage` to get
+        the next page without losing any filter or map-bounds settings.
+        """
+        parsed = urllib.parse.urlparse(base_url)
+        params = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+        if "searchQueryState" not in params:
+            return None
+        try:
+            state = json.loads(params["searchQueryState"][0])
+            if page <= 1:
+                state.pop("pagination", None)
+            else:
+                state["pagination"] = {"currentPage": page}
+            params["searchQueryState"] = [json.dumps(state, separators=(",", ":"))]
+            new_query = urllib.parse.urlencode(params, doseq=True)
+            return urllib.parse.urlunparse(parsed._replace(query=new_query))
+        except (json.JSONDecodeError, KeyError, TypeError):
+            return None
 
     def search(
         self,
         location: str,
         listing_type: str = "sale",
         max_pages: int = 5,
+        start_url: Optional[str] = None,
+        on_page=None,
     ) -> list[Property]:
         """Search Zillow for properties.
 
         Args:
-            location: Zillow location slug (e.g. "austin-tx", "90210", "chicago-il")
+            location: Zillow location slug (e.g. "austin-tx", "90210", "chicago-il").
+                      Ignored when start_url is provided.
             listing_type: "sale" or "rent"
-            max_pages: maximum number of result pages to scrape
+            max_pages: maximum number of result pages to scrape (Zillow caps at 20)
+            start_url: full Zillow search URL to use instead of building one from location.
+                       Pass a URL copied from the browser to use saved filter settings.
+            on_page: optional callback called with each page's new Property list as it arrives.
 
         Returns:
             List of Property objects.
         """
         all_properties = []
+        seen_zpids = set()
+        original_url = start_url or self._search_url(location, listing_type)
+        current_url = original_url
+        total_count = 0
+        # For searchQueryState URLs we always build pagination ourselves because
+        # Zillow's provided nextUrl strips the searchQueryState and loses all filters.
+        use_searchquery_pagination = "searchQueryState" in original_url
+
+        max_retries = 3
 
         for page in range(1, max_pages + 1):
-            url = self._search_url(location, listing_type, page)
-            print(f"[*] Scraping {listing_type} listings: {url}")
+            print(f"[*] Scraping {listing_type} listings: {current_url}")
 
-            try:
-                properties, total_count = self.scrape_search_page(url)
-            except httpx.HTTPStatusError as e:
-                print(f"[ERROR] HTTP {e.response.status_code} for {url}")
-                break
-            except Exception as e:
-                print(f"[ERROR] {e}")
+            properties = None
+            next_url = None
+            for attempt in range(max_retries):
+                try:
+                    properties, total_count, next_url = self.scrape_search_page(current_url)
+                    break
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code == 403 and attempt < max_retries - 1:
+                        wait = (attempt + 1) * 15
+                        print(f"[WARN] 403 on page {page} — retrying in {wait}s (attempt {attempt + 1}/{max_retries})")
+                        self.client.close()
+                        self.client = httpx.Client(
+                            headers=self._base_headers(),
+                            follow_redirects=True,
+                            timeout=30.0,
+                        )
+                        self._initialized = False
+                        time.sleep(wait)
+                        continue
+                    print(f"[ERROR] HTTP {e.response.status_code} on page {page}")
+                    return all_properties
+                except Exception as e:
+                    print(f"[ERROR] {e}")
+                    return all_properties
+
+            if properties is None:
                 break
 
             if not properties:
                 print(f"[*] No results on page {page}, stopping.")
                 break
 
-            all_properties.extend(properties)
-            print(f"[*] Found {len(properties)} listings (page {page}, {len(all_properties)}/{total_count} total)")
+            # Deduplicate by zpid
+            new_properties = [p for p in properties if p.zpid not in seen_zpids]
+            seen_zpids.update(p.zpid for p in new_properties)
+            all_properties.extend(new_properties)
 
-            # Stop if we've gotten all results
-            if len(all_properties) >= total_count:
+            dupes = len(properties) - len(new_properties)
+            dupe_msg = f", {dupes} duplicates skipped" if dupes else ""
+            print(f"[*] Found {len(new_properties)} listings (page {page}, {len(all_properties)}/{total_count} total{dupe_msg})")
+
+            if on_page and new_properties:
+                on_page(new_properties)
+
+            if total_count and len(all_properties) >= total_count:
                 break
+
+            if use_searchquery_pagination:
+                # Always construct next page from the original URL — Zillow's provided
+                # nextUrl strips the searchQueryState and loses all filters.
+                next_url = self._construct_next_searchquery_url(original_url, page + 1)
+                if not next_url:
+                    print(f"[*] Could not construct next page URL, stopping.")
+                    break
+            elif not next_url:
+                print(f"[*] No next page URL, stopping.")
+                break
+
+            current_url = next_url
 
         return all_properties
 

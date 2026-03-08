@@ -1,0 +1,65 @@
+# Saved searches for the Zillow scraper.
+#
+# Usage: python main.py scrape <name>
+#
+# Each entry maps a short name to a Zillow search URL plus any options.
+# Copy the URL directly from your browser after applying all filters.
+# CLI flags override these values when explicitly provided.
+#
+# Available options (all optional):
+#   url           (required) full Zillow search URL
+#   type          "sale", "rent", or "both" — inferred from URL if omitted
+#   pages         max pages to scrape (default: 5, Zillow caps at 20)
+#   enrich        true/false — fetch detail pages for rent Zestimates (default: false)
+#   skip_recent   integer days — skip re-enriching properties updated within N days
+#   filter_rentals true/false — keep only SFH/duplexes from rental results (default: false)
+#
+# Example:
+#
+# searches:
+#   austin-sfh:
+#     url: "https://www.zillow.com/austin-tx/houses/"
+#     type: sale
+#     pages: 20
+#     enrich: true
+#     skip_recent: 7
+#
+#   tampa-rentals:
+#     url: "https://www.zillow.com/tampa-fl/rentals/"
+#     type: rent
+#     pages: 20
+#     filter_rentals: true
+#     skip_recent: 3
+
+searches: 
+    manitou-occ-450:
+      url: "https://www.zillow.com/homes/for_sale/?searchQueryState=%7B%22isMapVisible%22%3Atrue%2C%22mapBounds%22%3A%7B%22north%22%3A38.887572826269725%2C%22south%22%3A38.83343706197927%2C%22east%22%3A-104.83660079353999%2C%22west%22%3A-104.93702269905756%7D%2C%22filterState%22%3A%7B%22sort%22%3A%7B%22value%22%3A%22globalrelevanceex%22%7D%2C%22price%22%3A%7B%22max%22%3A450000%7D%2C%22con%22%3A%7B%22value%22%3Afalse%7D%2C%22land%22%3A%7B%22value%22%3Afalse%7D%2C%22apa%22%3A%7B%22value%22%3Afalse%7D%2C%22apco%22%3A%7B%22value%22%3Afalse%7D%2C%22manu%22%3A%7B%22value%22%3Afalse%7D%2C%22tow%22%3A%7B%22value%22%3Afalse%7D%7D%2C%22isListVisible%22%3Atrue%2C%22mapZoom%22%3A14%2C%22category%22%3A%22cat1%22%2C%22pagination%22%3A%7B%7D%2C%22usersSearchTerm%22%3A%22%22%7D"
+      type: sale
+      pages: 20
+      #enrich: true
+      #skip_recent: 7
+    central-cos-450:
+      url: "https://www.zillow.com/homes/for_sale/?searchQueryState=%7B%22pagination%22%3A%7B%7D%2C%22isMapVisible%22%3Atrue%2C%22mapBounds%22%3A%7B%22west%22%3A-104.83963612046838%2C%22east%22%3A-104.7894251677096%2C%22south%22%3A38.822616802281345%2C%22north%22%3A38.849693952635775%7D%2C%22mapZoom%22%3A15%2C%22filterState%22%3A%7B%22sort%22%3A%7B%22value%22%3A%22globalrelevanceex%22%7D%2C%22price%22%3A%7B%22min%22%3Anull%2C%22max%22%3A450000%7D%2C%22tow%22%3A%7B%22value%22%3Afalse%7D%2C%22con%22%3A%7B%22value%22%3Afalse%7D%2C%22land%22%3A%7B%22value%22%3Afalse%7D%2C%22apa%22%3A%7B%22value%22%3Afalse%7D%2C%22manu%22%3A%7B%22value%22%3Afalse%7D%2C%22apco%22%3A%7B%22value%22%3Afalse%7D%7D%2C%22isListVisible%22%3Atrue%7D"
+      type: sale
+      pages: 20
+      #enrich: true
+      #skip_recent: 7
+    north-450:
+      url: "https://www.zillow.com/homes/for_sale/?searchQueryState=%7B%22pagination%22%3A%7B%7D%2C%22isMapVisible%22%3Atrue%2C%22mapBounds%22%3A%7B%22west%22%3A-104.87457516102316%2C%22east%22%3A-104.673731349988%2C%22south%22%3A38.86245644554695%2C%22north%22%3A38.97064255877973%7D%2C%22mapZoom%22%3A13%2C%22filterState%22%3A%7B%22sort%22%3A%7B%22value%22%3A%22globalrelevanceex%22%7D%2C%22price%22%3A%7B%22min%22%3Anull%2C%22max%22%3A450000%7D%2C%22tow%22%3A%7B%22value%22%3Afalse%7D%2C%22con%22%3A%7B%22value%22%3Afalse%7D%2C%22land%22%3A%7B%22value%22%3Afalse%7D%2C%22apa%22%3A%7B%22value%22%3Afalse%7D%2C%22manu%22%3A%7B%22value%22%3Afalse%7D%2C%22apco%22%3A%7B%22value%22%3Afalse%7D%7D%2C%22isListVisible%22%3Atrue%7D"
+      type: sale
+      pages: 20
+      #enrich: true
+      #skip_recent: 7
+    big-450:
+      url: "https://www.zillow.com/homes/for_sale/?searchQueryState=%7B%22pagination%22%3A%7B%7D%2C%22isMapVisible%22%3Atrue%2C%22mapBounds%22%3A%7B%22west%22%3A-105.01087429432394%2C%22east%22%3A-104.20749905018332%2C%22south%22%3A38.663984813342374%2C%22north%22%3A39.096946995134665%7D%2C%22mapZoom%22%3A11%2C%22filterState%22%3A%7B%22sort%22%3A%7B%22value%22%3A%22globalrelevanceex%22%7D%2C%22price%22%3A%7B%22min%22%3Anull%2C%22max%22%3A450000%7D%2C%22tow%22%3A%7B%22value%22%3Afalse%7D%2C%22con%22%3A%7B%22value%22%3Afalse%7D%2C%22land%22%3A%7B%22value%22%3Afalse%7D%2C%22apa%22%3A%7B%22value%22%3Afalse%7D%2C%22manu%22%3A%7B%22value%22%3Afalse%7D%2C%22apco%22%3A%7B%22value%22%3Afalse%7D%7D%2C%22isListVisible%22%3Atrue%7D"
+      type: sale
+      pages: 20
+      #enrich: true
+      #skip_recent: 7
+################################ rent #############################
+    big-3k-rent:
+      url: "https://www.zillow.com/homes/for_rent/?searchQueryState=%7B%22pagination%22%3A%7B%7D%2C%22isMapVisible%22%3Atrue%2C%22mapBounds%22%3A%7B%22west%22%3A-105.01087429432394%2C%22east%22%3A-104.20749905018332%2C%22south%22%3A38.663984813342374%2C%22north%22%3A39.096946995134665%7D%2C%22mapZoom%22%3A11%2C%22filterState%22%3A%7B%22price%22%3A%7B%22min%22%3Anull%2C%22max%22%3A450000%7D%2C%22tow%22%3A%7B%22value%22%3Afalse%7D%2C%22con%22%3A%7B%22value%22%3Afalse%7D%2C%22land%22%3A%7B%22value%22%3Afalse%7D%2C%22apa%22%3A%7B%22value%22%3Afalse%7D%2C%22manu%22%3A%7B%22value%22%3Afalse%7D%2C%22apco%22%3A%7B%22value%22%3Afalse%7D%2C%22mp%22%3A%7B%22max%22%3A3000%7D%2C%22fr%22%3A%7B%22value%22%3Atrue%7D%2C%22fsba%22%3A%7B%22value%22%3Afalse%7D%2C%22fsbo%22%3A%7B%22value%22%3Afalse%7D%2C%22nc%22%3A%7B%22value%22%3Afalse%7D%2C%22cmsn%22%3A%7B%22value%22%3Afalse%7D%2C%22auc%22%3A%7B%22value%22%3Afalse%7D%2C%22fore%22%3A%7B%22value%22%3Afalse%7D%7D%2C%22isListVisible%22%3Atrue%2C%22usersSearchTerm%22%3A%22%22%7D"
+      type: rent
+      pages: 20
+      #enrich: true
+      #skip_recent: 7

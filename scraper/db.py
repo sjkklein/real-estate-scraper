@@ -46,6 +46,7 @@ def init_db(conn: sqlite3.Connection):
             detail_url TEXT,
             days_on_zillow INTEGER,
             scraped_at TEXT,
+            search_name TEXT,
             updated_at TEXT DEFAULT (datetime('now'))
         );
 
@@ -65,6 +66,12 @@ def init_db(conn: sqlite3.Connection):
             ON zip_districts(school_district);
     """)
     conn.commit()
+    # Migration: add search_name to existing databases
+    try:
+        conn.execute("ALTER TABLE properties ADD COLUMN search_name TEXT")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass  # column already exists
 
 
 def load_district_data(conn: sqlite3.Connection):
@@ -183,19 +190,101 @@ def get_rental_comps(
     return [dict(r) for r in rows]
 
 
-def get_stats(conn: sqlite3.Connection, city: Optional[str] = None, district: Optional[str] = None) -> dict:
+def load_enrichment_data(conn: sqlite3.Connection, properties: list) -> None:
+    """Pre-populate enrichment fields on Property objects from existing DB data.
+
+    Matches first by zpid, then falls back to address for properties whose zpid
+    may have changed between scrapes.
+    """
+    if not properties:
+        return
+
+    zpids = [p.zpid for p in properties]
+    placeholders = ",".join("?" * len(zpids))
+    rows = conn.execute(
+        f"""SELECT zpid, address, rent_zestimate, zestimate, year_built, lot_sqft, sqft,
+                   bathrooms, property_type
+            FROM properties
+            WHERE zpid IN ({placeholders})
+              AND (rent_zestimate IS NOT NULL OR property_type IS NOT NULL)""",
+        zpids,
+    ).fetchall()
+    zpid_data = {r["zpid"]: dict(r) for r in rows}
+
+    # Fall back to address matching for properties not found by zpid
+    missing_addresses = [p.address for p in properties if p.address and p.zpid not in zpid_data]
+    address_data: dict = {}
+    if missing_addresses:
+        addr_placeholders = ",".join("?" * len(missing_addresses))
+        addr_rows = conn.execute(
+            f"""SELECT zpid, address, rent_zestimate, zestimate, year_built, lot_sqft, sqft,
+                       bathrooms, property_type
+                FROM properties
+                WHERE address IN ({addr_placeholders})
+                  AND (rent_zestimate IS NOT NULL OR property_type IS NOT NULL)""",
+            missing_addresses,
+        ).fetchall()
+        address_data = {r["address"]: dict(r) for r in addr_rows}
+
+    for prop in properties:
+        existing = zpid_data.get(prop.zpid) or address_data.get(prop.address)
+        if not existing:
+            continue
+        if not prop.rent_zestimate and existing.get("rent_zestimate"):
+            prop.rent_zestimate = existing["rent_zestimate"]
+        if not prop.zestimate and existing.get("zestimate"):
+            prop.zestimate = existing["zestimate"]
+        if not prop.year_built and existing.get("year_built"):
+            prop.year_built = existing["year_built"]
+        if not prop.lot_sqft and existing.get("lot_sqft"):
+            prop.lot_sqft = existing["lot_sqft"]
+        if not prop.sqft and existing.get("sqft"):
+            prop.sqft = existing["sqft"]
+        if not prop.bathrooms and existing.get("bathrooms"):
+            prop.bathrooms = existing["bathrooms"]
+        # Prefer enriched property_type over the generic search result type
+        if existing.get("property_type") and existing["property_type"] != prop.property_type:
+            prop.property_type = existing["property_type"]
+
+
+def get_recently_typed_addresses(conn: sqlite3.Connection, days: int) -> set[str]:
+    """Return addresses of rental properties with an enriched property_type updated within N days."""
+    rows = conn.execute(
+        """SELECT address FROM properties
+           WHERE listing_type = 'rent'
+             AND property_type IS NOT NULL
+             AND property_type NOT IN ('MULTI_FAMILY', 'APARTMENT', '')
+             AND address IS NOT NULL
+             AND updated_at >= datetime('now', ?)""",
+        (f"-{days} days",),
+    ).fetchall()
+    return {r["address"] for r in rows}
+
+
+def get_recently_enriched_addresses(conn: sqlite3.Connection, days: int) -> set[str]:
+    """Return addresses of properties that were enriched (attempted) within the last N days.
+
+    Intentionally does NOT require rent_zestimate to be set — if a previous enrichment
+    attempt ran but yielded no data, we still respect the skip window so the property
+    isn't retried on every run.
+    """
+    rows = conn.execute(
+        """SELECT address FROM properties
+           WHERE address IS NOT NULL
+             AND updated_at >= datetime('now', ?)""",
+        (f"-{days} days",),
+    ).fetchall()
+    return {r["address"] for r in rows}
+
+
+def get_stats(conn: sqlite3.Connection, city: Optional[str] = None) -> dict:
     """Get summary statistics for stored properties."""
-    joins = ""
     where_parts = []
     params = []
 
     if city:
         where_parts.append("LOWER(p.city) = LOWER(?)")
         params.append(city)
-    if district:
-        joins = "JOIN zip_districts zd ON p.zipcode = zd.zipcode"
-        where_parts.append("LOWER(zd.school_district) LIKE LOWER(?)")
-        params.append(f"%{district}%")
 
     where = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
 
@@ -208,7 +297,7 @@ def get_stats(conn: sqlite3.Connection, city: Optional[str] = None, district: Op
             AVG(CASE WHEN p.listing_type='rent' THEN p.price END) as avg_rent,
             AVG(p.rent_zestimate) as avg_rent_zestimate,
             COUNT(DISTINCT p.city || p.state) as locations
-        FROM properties p {joins} {where}
+        FROM properties p {where}
     """, params).fetchone()
 
     return dict(row)
