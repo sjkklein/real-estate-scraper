@@ -145,6 +145,21 @@ def cmd_scrape_all(args):
         print()
 
 
+def cmd_chart(args):
+    """Generate price vs. estimated rent chart for one or more zip codes."""
+    from pathlib import Path
+    from scraper.db import get_connection, init_db
+    from analysis.chart import build
+
+    conn = get_connection()
+    init_db(conn)
+    try:
+        out = Path(args.output) if args.output else None
+        build(conn, args.zip, model=args.model, output_path=out, open_browser=not args.no_browser)
+    finally:
+        conn.close()
+
+
 def cmd_analyze_rents(args):
     """Train OLS rent model and estimate rent for all sale listings."""
     from scraper.db import get_connection, init_db
@@ -223,6 +238,15 @@ def main():
     p_ar = subparsers.add_parser("analyze-rents", help="Estimate rent for sale listings using OLS model")
     p_ar.add_argument("--model", default="ols_v1", help="Model name tag stored in rent_estimates (default: ols_v1)")
     p_ar.set_defaults(func=cmd_analyze_rents)
+
+    # --- chart ---
+    p_chart = subparsers.add_parser("chart", help="Price vs. estimated rent scatter chart (Plotly HTML)")
+    p_chart.add_argument("--zip", nargs="+", required=True, metavar="ZIPCODE",
+                         help="One or more zip codes to include")
+    p_chart.add_argument("--model", default="ols_v1", help="Which rent_estimates model to plot (default: ols_v1)")
+    p_chart.add_argument("-o", "--output", default=None, help="Output HTML file path (default: data/charts/...)")
+    p_chart.add_argument("--no-browser", action="store_true", help="Save file without opening browser")
+    p_chart.set_defaults(func=cmd_chart)
 
     # --- stats ---
     p_stats = subparsers.add_parser("stats", help="Show database statistics")
