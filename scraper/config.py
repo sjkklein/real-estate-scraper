@@ -7,6 +7,14 @@ from typing import Optional
 
 CONFIG_PATH = Path(__file__).parent.parent / "config.yaml"
 
+CHART_DEFAULTS: dict = {
+    "down": 20.0,
+    "rate": 7.0,
+    "years": 30,
+    "tax_rate": 1.2,
+    "insurance_rate": 0.5,
+}
+
 # Hardcoded defaults — used when neither CLI nor config provides a value
 SCRAPE_DEFAULTS: dict = {
     "type": "both",
@@ -50,6 +58,21 @@ def resolve_search_entry(config: dict, key: str) -> tuple[Optional[str], dict]:
 def infer_listing_type(url: str) -> str:
     """Infer 'rent' or 'sale' from a Zillow URL."""
     return "rent" if "rental" in url.lower() else "sale"
+
+
+def resolve_chart_options(config: dict, args) -> dict:
+    """Merge config chart section + CLI args into final chart options dict.
+
+    Priority: CLI args (when not None) > config.yaml [chart] > CHART_DEFAULTS.
+    Returns a dict with keys: down, rate, years, tax_rate, insurance_rate.
+    """
+    opts = dict(CHART_DEFAULTS)
+    opts.update({k: v for k, v in config.get("chart", {}).items() if v is not None})
+    for key in ("down", "rate", "years", "tax_rate", "insurance_rate"):
+        cli_val = getattr(args, key, None)
+        if cli_val is not None:
+            opts[key] = cli_val
+    return opts
 
 
 def resolve_scrape_options(config: dict, args) -> dict:

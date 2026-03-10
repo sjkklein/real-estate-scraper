@@ -11,9 +11,9 @@ from scraper.db import (
     get_connection, init_db,
     upsert_property, upsert_properties, query_properties, get_stats,
     get_recently_enriched_addresses, get_recently_typed_addresses,
-    load_enrichment_data,
+    load_enrichment_data, get_address_by_rowid,
 )
-from scraper.config import load_config, resolve_scrape_options
+from scraper.config import load_config, resolve_scrape_options, resolve_chart_options
 
 
 def cmd_scrape(args):
@@ -74,6 +74,82 @@ def cmd_scrape(args):
     stats = get_stats(conn)
     print(f"\nDatabase totals: {stats['total']} properties ({stats['for_sale']} sale, {stats['for_rent']} rent)")
     conn.close()
+
+
+def _load_config_blacklist(config: dict, conn=None) -> list[str]:
+    """Return a list of blacklisted addresses from config.yaml.
+
+    Entries can be address strings or integer row IDs (resolved via the DB when
+    conn is provided). Unresolvable row IDs are warned and skipped.
+    """
+    addresses = []
+    for entry in (config.get("blacklist") or []):
+        if entry is None:
+            continue
+        if isinstance(entry, int):
+            if conn is None:
+                print(f"[WARN] Cannot resolve blacklist row ID {entry} without a DB connection — skipped")
+                continue
+            addr = get_address_by_rowid(conn, entry)
+            if addr:
+                addresses.append(addr)
+            else:
+                print(f"[WARN] No property found for blacklist row ID {entry} — skipped")
+        else:
+            addresses.append(str(entry))
+    return addresses
+
+
+def _write_config_blacklist(addresses: list[str]):
+    import yaml
+    config = load_config()
+    config["blacklist"] = addresses
+    with open("config.yaml", "w") as f:
+        yaml.dump(config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+
+def cmd_blacklist(args):
+    """Add, remove, or list blacklisted properties."""
+    config = load_config()
+    blacklist = _load_config_blacklist(config)
+
+    if args.action == "add":
+        conn = get_connection()
+        init_db(conn)
+        try:
+            address = get_address_by_rowid(conn, int(args.rowid))
+        finally:
+            conn.close()
+        if not address:
+            print(f"No property found with row ID {args.rowid}.")
+            return
+        if address in blacklist:
+            print(f"Already blacklisted: {address}")
+        else:
+            blacklist.append(address)
+            _write_config_blacklist(blacklist)
+            print(f"Blacklisted: {address}")
+
+    elif args.action == "remove":
+        matches = [a for a in blacklist if args.address.lower() in a.lower()]
+        if not matches:
+            print(f"No blacklist entry matching '{args.address}'.")
+        elif len(matches) > 1:
+            print(f"Multiple matches — be more specific:")
+            for m in matches:
+                print(f"  {m}")
+        else:
+            blacklist.remove(matches[0])
+            _write_config_blacklist(blacklist)
+            print(f"Removed: {matches[0]}")
+
+    elif args.action == "list":
+        raw = config.get("blacklist") or []
+        if not raw:
+            print("Blacklist is empty.")
+        else:
+            for i, entry in enumerate(raw, 1):
+                print(f"  {i}. {entry}")
 
 
 def cmd_stats(args):
@@ -151,11 +227,43 @@ def cmd_chart(args):
     from scraper.db import get_connection, init_db
     from analysis.chart import build
 
+    config = load_config()
     conn = get_connection()
     init_db(conn)
     try:
+        blacklist = _load_config_blacklist(config, conn)
         out = Path(args.output) if args.output else None
-        build(conn, args.zip, model=args.model, output_path=out, open_browser=not args.no_browser)
+        build(conn, args.zip, model=args.model, blacklist=blacklist, output_path=out, open_browser=not args.no_browser)
+    finally:
+        conn.close()
+
+
+def cmd_margin_chart(args):
+    """Generate cash-flow margin chart (rent minus mortgage+HOA+tax+insurance)."""
+    from pathlib import Path
+    from scraper.db import get_connection, init_db
+    from analysis.chart import build_margin
+
+    config = load_config()
+    o = resolve_chart_options(config, args)
+
+    conn = get_connection()
+    init_db(conn)
+    try:
+        blacklist = _load_config_blacklist(config, conn)
+        out = Path(args.output) if args.output else None
+        build_margin(
+            conn, args.zip,
+            model=args.model,
+            down_pct=o["down"] / 100,
+            rate=o["rate"] / 100,
+            years=int(o["years"]),
+            tax_rate=o["tax_rate"] / 100,
+            insurance_rate=o["insurance_rate"] / 100,
+            blacklist=blacklist,
+            output_path=out,
+            open_browser=not args.no_browser,
+        )
     finally:
         conn.close()
 
@@ -247,6 +355,39 @@ def main():
     p_chart.add_argument("-o", "--output", default=None, help="Output HTML file path (default: data/charts/...)")
     p_chart.add_argument("--no-browser", action="store_true", help="Save file without opening browser")
     p_chart.set_defaults(func=cmd_chart)
+
+    # --- margin-chart ---
+    p_margin = subparsers.add_parser("margin-chart", help="Cash-flow margin chart: rent minus mortgage+HOA+tax+ins")
+    p_margin.add_argument("--zip", nargs="+", required=True, metavar="ZIPCODE",
+                          help="One or more zip codes to include")
+    p_margin.add_argument("--model", default="ols_v1", help="Which rent_estimates model to use (default: ols_v1)")
+    p_margin.add_argument("--down", type=float, default=None, metavar="PCT",
+                          help="Down payment %% (overrides config.yaml chart.down)")
+    p_margin.add_argument("--rate", type=float, default=None, metavar="PCT",
+                          help="Annual mortgage interest rate %% (overrides config.yaml chart.rate)")
+    p_margin.add_argument("--years", type=int, default=None,
+                          help="Loan term in years (overrides config.yaml chart.years)")
+    p_margin.add_argument("--tax-rate", type=float, default=None, metavar="PCT",
+                          help="Fallback annual property tax as %% of price (overrides config.yaml chart.tax_rate)")
+    p_margin.add_argument("--insurance-rate", type=float, default=None, metavar="PCT",
+                          help="Fallback annual insurance as %% of price (overrides config.yaml chart.insurance_rate)")
+    p_margin.add_argument("-o", "--output", default=None, help="Output HTML file path (default: data/charts/...)")
+    p_margin.add_argument("--no-browser", action="store_true", help="Save file without opening browser")
+    p_margin.set_defaults(func=cmd_margin_chart)
+
+    # --- blacklist ---
+    p_bl = subparsers.add_parser("blacklist", help="Manage the property blacklist in config.yaml")
+    bl_sub = p_bl.add_subparsers(dest="action", required=True)
+
+    bl_add = bl_sub.add_parser("add", help="Blacklist a property by its row ID (shown in chart hover)")
+    bl_add.add_argument("rowid", help="SQLite row ID of the property to blacklist")
+
+    bl_rm = bl_sub.add_parser("remove", help="Remove an entry from the blacklist by address fragment")
+    bl_rm.add_argument("address", help="Address string (or substring) to remove")
+
+    bl_sub.add_parser("list", help="Show all blacklisted addresses")
+
+    p_bl.set_defaults(func=cmd_blacklist)
 
     # --- stats ---
     p_stats = subparsers.add_parser("stats", help="Show database statistics")

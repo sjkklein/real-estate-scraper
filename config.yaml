@@ -31,12 +31,37 @@
 #     filter_rentals: true
 #     skip_recent: 3
 
+
+# Mortgage and cost assumptions for the margin-chart command.
+# CLI flags (--down, --rate, etc.) override these when explicitly provided.
+#
+# tax_rate and insurance_rate are fallback estimates used only when a property
+# has no actual annual_tax / annual_homeowners_insurance in the database
+# (i.e. detail-page enrichment hasn't been run). Set them to values typical
+# for your target market.
+chart:
+  down: 20          # down payment %
+  rate: 6.5         # annual mortgage interest rate %
+  years: 30         # loan term in years
+  tax_rate: 0.4     # fallback: annual property tax as % of price
+  insurance_rate: 0.5  # fallback: annual homeowners insurance as % of price
+
+# Addresses to exclude from all charts.
+#   python main.py blacklist add <row-id>        (row ID shown in chart hover)
+#   python main.py blacklist remove <fragment>
+#   python main.py blacklist list
+blacklist: 
+  - 9
+  - 275
+  - 2
+  
+
 searches: 
     manitou-occ-450:
       url: "https://www.zillow.com/homes/for_sale/?searchQueryState=%7B%22isMapVisible%22%3Atrue%2C%22mapBounds%22%3A%7B%22north%22%3A38.887572826269725%2C%22south%22%3A38.83343706197927%2C%22east%22%3A-104.83660079353999%2C%22west%22%3A-104.93702269905756%7D%2C%22filterState%22%3A%7B%22sort%22%3A%7B%22value%22%3A%22globalrelevanceex%22%7D%2C%22price%22%3A%7B%22max%22%3A450000%7D%2C%22con%22%3A%7B%22value%22%3Afalse%7D%2C%22land%22%3A%7B%22value%22%3Afalse%7D%2C%22apa%22%3A%7B%22value%22%3Afalse%7D%2C%22apco%22%3A%7B%22value%22%3Afalse%7D%2C%22manu%22%3A%7B%22value%22%3Afalse%7D%2C%22tow%22%3A%7B%22value%22%3Afalse%7D%7D%2C%22isListVisible%22%3Atrue%2C%22mapZoom%22%3A14%2C%22category%22%3A%22cat1%22%2C%22pagination%22%3A%7B%7D%2C%22usersSearchTerm%22%3A%22%22%7D"
       type: sale
       pages: 20
-      #enrich: true
+      enrich: true
       #skip_recent: 7
     central-cos-450:
       url: "https://www.zillow.com/homes/for_sale/?searchQueryState=%7B%22pagination%22%3A%7B%7D%2C%22isMapVisible%22%3Atrue%2C%22mapBounds%22%3A%7B%22west%22%3A-104.83963612046838%2C%22east%22%3A-104.7894251677096%2C%22south%22%3A38.822616802281345%2C%22north%22%3A38.849693952635775%7D%2C%22mapZoom%22%3A15%2C%22filterState%22%3A%7B%22sort%22%3A%7B%22value%22%3A%22globalrelevanceex%22%7D%2C%22price%22%3A%7B%22min%22%3Anull%2C%22max%22%3A450000%7D%2C%22tow%22%3A%7B%22value%22%3Afalse%7D%2C%22con%22%3A%7B%22value%22%3Afalse%7D%2C%22land%22%3A%7B%22value%22%3Afalse%7D%2C%22apa%22%3A%7B%22value%22%3Afalse%7D%2C%22manu%22%3A%7B%22value%22%3Afalse%7D%2C%22apco%22%3A%7B%22value%22%3Afalse%7D%7D%2C%22isListVisible%22%3Atrue%7D"
@@ -54,12 +79,12 @@ searches:
       url: "https://www.zillow.com/homes/for_sale/?searchQueryState=%7B%22pagination%22%3A%7B%7D%2C%22isMapVisible%22%3Atrue%2C%22mapBounds%22%3A%7B%22west%22%3A-105.01087429432394%2C%22east%22%3A-104.20749905018332%2C%22south%22%3A38.663984813342374%2C%22north%22%3A39.096946995134665%7D%2C%22mapZoom%22%3A11%2C%22filterState%22%3A%7B%22sort%22%3A%7B%22value%22%3A%22globalrelevanceex%22%7D%2C%22price%22%3A%7B%22min%22%3Anull%2C%22max%22%3A450000%7D%2C%22tow%22%3A%7B%22value%22%3Afalse%7D%2C%22con%22%3A%7B%22value%22%3Afalse%7D%2C%22land%22%3A%7B%22value%22%3Afalse%7D%2C%22apa%22%3A%7B%22value%22%3Afalse%7D%2C%22manu%22%3A%7B%22value%22%3Afalse%7D%2C%22apco%22%3A%7B%22value%22%3Afalse%7D%7D%2C%22isListVisible%22%3Atrue%7D"
       type: sale
       pages: 20
-      #enrich: true
+      enrich: true
       #skip_recent: 7
 ################################ rent #############################
     big-3k-rent:
       url: "https://www.zillow.com/homes/for_rent/?searchQueryState=%7B%22pagination%22%3A%7B%7D%2C%22isMapVisible%22%3Atrue%2C%22mapBounds%22%3A%7B%22west%22%3A-105.01087429432394%2C%22east%22%3A-104.20749905018332%2C%22south%22%3A38.663984813342374%2C%22north%22%3A39.096946995134665%7D%2C%22mapZoom%22%3A11%2C%22filterState%22%3A%7B%22price%22%3A%7B%22min%22%3Anull%2C%22max%22%3A450000%7D%2C%22tow%22%3A%7B%22value%22%3Afalse%7D%2C%22con%22%3A%7B%22value%22%3Afalse%7D%2C%22land%22%3A%7B%22value%22%3Afalse%7D%2C%22apa%22%3A%7B%22value%22%3Afalse%7D%2C%22manu%22%3A%7B%22value%22%3Afalse%7D%2C%22apco%22%3A%7B%22value%22%3Afalse%7D%2C%22mp%22%3A%7B%22max%22%3A3000%7D%2C%22fr%22%3A%7B%22value%22%3Atrue%7D%2C%22fsba%22%3A%7B%22value%22%3Afalse%7D%2C%22fsbo%22%3A%7B%22value%22%3Afalse%7D%2C%22nc%22%3A%7B%22value%22%3Afalse%7D%2C%22cmsn%22%3A%7B%22value%22%3Afalse%7D%2C%22auc%22%3A%7B%22value%22%3Afalse%7D%2C%22fore%22%3A%7B%22value%22%3Afalse%7D%7D%2C%22isListVisible%22%3Atrue%2C%22usersSearchTerm%22%3A%22%22%7D"
       type: rent
       pages: 20
-      #enrich: true
+      enrich: true
       #skip_recent: 7

@@ -68,6 +68,12 @@ def init_db(conn: sqlite3.Connection):
 
         CREATE INDEX IF NOT EXISTS idx_zip_districts_district
             ON zip_districts(school_district);
+
+        CREATE TABLE IF NOT EXISTS blacklist (
+            address TEXT PRIMARY KEY,
+            note TEXT,
+            added_at TEXT DEFAULT (datetime('now'))
+        );
     """)
     conn.commit()
     for col, typedef in [
@@ -292,6 +298,14 @@ def get_recently_enriched_addresses(conn: sqlite3.Connection, days: int) -> set[
         (f"-{days} days",),
     ).fetchall()
     return {r["address"] for r in rows}
+
+
+def get_address_by_rowid(conn: sqlite3.Connection, rowid: int) -> Optional[str]:
+    """Look up the address of a property by its SQLite rowid."""
+    row = conn.execute(
+        "SELECT address FROM properties WHERE rowid = ?", (rowid,)
+    ).fetchone()
+    return row["address"] if row else None
 
 
 def get_stats(conn: sqlite3.Connection, city: Optional[str] = None) -> dict:
