@@ -32,14 +32,23 @@ Sale listings: 707 total. Most have sqft, beds, baths populated via enrichment.
 - Analysis code lives in `analysis/` directory
 
 ### Rent estimation strategy
-- **Phase 1 model:** OLS linear regression (scikit-learn)
-  - Features: sqft, bedrooms, bathrooms, zip-code (target-encoded by median rent),
-    plus lat/lon-weighted comps for sparse zips
-  - Trained on SFH + duplex rental listings only
-  - Store: estimated rent, n_comps (sample size used for encoding), model version
+Multiple models can coexist in `rent_estimates` (identified by `model` column).
+
+- **`ols_v1` — Two-stage OLS** (`analysis/rent_model.py`)
+  - Stage 1: zip-level median rent (geo-weighted for sparse zips)
+  - Stage 2: OLS on log(rent/zip_median) ~ log(sqft) + bedrooms
+  - In-sample MAE ~$218/mo, R² ~0.49 on 689 rentals
+
+- **`knn_v1` — Weighted KNN comps** (`analysis/knn_model.py`)
+  - For each sale listing, finds the K=10 most similar rental comps
+  - Combined distance: sqrt((sqft_diff/300)² + (geo_miles/3)²)
+  - Bedroom matching: exact → ±1 → any (progressive relaxation if < MIN_K=3 comps)
+  - Estimate: distance-weighted average rent of top-K comps
+  - Evaluated via leave-one-out on rentals with coordinates
+  - Most interpretable: the estimate IS the comps; n_comps stored for transparency
+
 - **Zillow benchmark:** `rent_zestimate` from properties table stored side-by-side
-  for comparison — not used in our model, used in final aggregated output
-- Multiple models can coexist in `rent_estimates` (identified by `model` column)
+  for comparison — not used in our models, shown alongside in charts
 
 ### Geographic proximity for sparse zips
 - When a zip has fewer than N rentals (threshold TBD, ~10), expand the training
@@ -140,7 +149,7 @@ CREATE TABLE investment_analysis (
       — Bug found & fixed: builder/new-construction listings were misclassified as rentals
         (91 records with prices $300k–$450k in listing_type='rent'). Fixed in scraper
         by checking homeStatus before falling back to URL-based detection.
-- [x] CLI command: `python main.py analyze-rents`
+- [x] CLI command: `python main.py analyze-rents --algo ols|knn`
 - [ ] Evaluate: compare OLS estimates vs Zillow zestimate on held-out rentals
 
 ### Phase 2 — Investment analysis *(planned)*
@@ -150,9 +159,10 @@ CREATE TABLE investment_analysis (
 - [ ] CLI command: `python main.py analyze investments [--down 20] [--rate 7.0]`
 - [ ] Output: ranked CSV/table of listings by cash-on-cash return
 
-### Phase 3 — Multi-model evaluation *(future)*
-- [ ] Try additional models (e.g. gradient boosting) stored under different `model` names
-- [ ] Add comparison report showing model accuracy vs Zillow zestimate
+### Phase 3 — Multi-model evaluation *(in progress)*
+- [x] KNN weighted comps model (`knn_v1`) — `python main.py analyze-rents --algo knn`
+- [ ] Compare OLS vs KNN vs Zillow zestimate accuracy on held-out rentals
+- [ ] Try gradient boosting (XGBoost) if KNN still underperforms
 
 ---
 

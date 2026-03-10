@@ -54,6 +54,8 @@ blacklist:
   - 9
   - 275
   - 2
+  - 525
+  - 242
   
 
 searches: 

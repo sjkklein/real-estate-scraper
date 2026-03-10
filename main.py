@@ -269,15 +269,20 @@ def cmd_margin_chart(args):
 
 
 def cmd_analyze_rents(args):
-    """Train OLS rent model and estimate rent for all sale listings."""
+    """Run a rent estimation model and store results in rent_estimates."""
     from scraper.db import get_connection, init_db
-    from analysis.rent_model import run as run_model
+
+    if args.algo == "knn":
+        from analysis.knn_model import run as run_model
+    else:
+        from analysis.rent_model import run as run_model
 
     conn = get_connection()
     init_db(conn)
     try:
         summary = run_model(conn)
-        print(f"\nModel '{args.model}': trained on {summary['trained_on']} rentals, "
+        model_tag = summary.get("model", "knn_v1" if args.algo == "knn" else args.model)
+        print(f"\nAlgo '{args.algo}': trained on {summary['trained_on']} rentals, "
               f"MAE ${summary['mae']:,.0f}/mo, R² {summary['r2']:.3f}, "
               f"{summary['predicted']} sale listings estimated.")
     finally:
@@ -343,8 +348,10 @@ def main():
     p_scrape_all.set_defaults(func=cmd_scrape_all)
 
     # --- analyze-rents ---
-    p_ar = subparsers.add_parser("analyze-rents", help="Estimate rent for sale listings using OLS model")
-    p_ar.add_argument("--model", default="ols_v1", help="Model name tag stored in rent_estimates (default: ols_v1)")
+    p_ar = subparsers.add_parser("analyze-rents", help="Estimate rent for sale listings")
+    p_ar.add_argument("--algo", choices=["ols", "knn"], default="ols",
+                      help="Estimation algorithm: 'ols' (two-stage OLS, default) or 'knn' (weighted comps)")
+    p_ar.add_argument("--model", default="ols_v1", help="Model name tag in rent_estimates (default: ols_v1)")
     p_ar.set_defaults(func=cmd_analyze_rents)
 
     # --- chart ---

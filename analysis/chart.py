@@ -252,6 +252,10 @@ def build_margin(
     n_with_zestimate = df["rent_zestimate"].notna().sum()
     print(f"[*] {len(df)} listings | {n_with_estimate} OLS estimates | {n_with_zestimate} Zillow zestimates")
 
+    # Coerce cost columns to numeric (SQLite can return strings for sparse columns)
+    for col in ("hoa_fee", "annual_tax", "annual_homeowners_insurance"):
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
     # Monthly cost components
     df["mortgage"] = df["price"].apply(lambda p: _monthly_mortgage(p, down_pct, rate, years))
     df["monthly_tax"] = df.apply(
