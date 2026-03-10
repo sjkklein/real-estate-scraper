@@ -8,12 +8,25 @@ import sys
 
 from scraper.zillow import ZillowScraper
 from scraper.db import (
-    get_connection, init_db,
-    upsert_property, upsert_properties, query_properties, get_stats,
-    get_recently_enriched_addresses, get_recently_typed_addresses,
-    load_enrichment_data, get_address_by_rowid,
+    get_connection,
+    init_db,
+    upsert_property,
+    upsert_properties,
+    query_properties,
+    get_stats,
+    get_recently_enriched_addresses,
+    get_recently_typed_addresses,
+    load_enrichment_data,
+    get_address_by_rowid,
 )
 from scraper.config import load_config, resolve_scrape_options, resolve_chart_options
+from scraper.enviroscreen import (
+    init_enviroscreen_tables,
+    load_enviroscreen_csv,
+    match_properties_to_tracts,
+    query_di_ci_properties,
+    get_enviroscreen_stats,
+)
 
 
 def cmd_scrape(args):
@@ -40,39 +53,69 @@ def cmd_scrape(args):
     with ZillowScraper() as scraper:
         if listing_type in ("sale", "both"):
             print(f"\n--- Scraping FOR SALE listings: {start_url or location} ---")
-            sale_props = scraper.search(location, "sale", max_pages=pages, start_url=start_url, on_page=save_page)
+            sale_props = scraper.search(
+                location,
+                "sale",
+                max_pages=pages,
+                start_url=start_url,
+                on_page=save_page,
+            )
             for p in sale_props:
                 p.search_name = location
             if sale_props:
                 if o["enrich"]:
                     skip_addresses = set()
                     if o["skip_recent"]:
-                        skip_addresses = get_recently_enriched_addresses(conn, o["skip_recent"])
+                        skip_addresses = get_recently_enriched_addresses(
+                            conn, o["skip_recent"]
+                        )
                         if skip_addresses:
-                            print(f"[*] Skipping {len(skip_addresses)} properties enriched in the last {o['skip_recent']} day(s)")
+                            print(
+                                f"[*] Skipping {len(skip_addresses)} properties enriched in the last {o['skip_recent']} day(s)"
+                            )
                         # Pre-populate enrichment fields from DB for skipped properties
                         load_enrichment_data(conn, sale_props)
-                    scraper.enrich_properties(sale_props, skip_addresses=skip_addresses, on_enrich=save_enriched)
+                    scraper.enrich_properties(
+                        sale_props,
+                        skip_addresses=skip_addresses,
+                        on_enrich=save_enriched,
+                    )
                 print(f"Saved {len(sale_props)} sale listings")
 
         if listing_type in ("rent", "both"):
             print(f"\n--- Scraping RENTAL listings: {start_url or location} ---")
-            rent_props = scraper.search(location, "rent", max_pages=pages, start_url=start_url, on_page=save_page)
+            rent_props = scraper.search(
+                location,
+                "rent",
+                max_pages=pages,
+                start_url=start_url,
+                on_page=save_page,
+            )
             for p in rent_props:
                 p.search_name = location
             if rent_props:
                 if o["filter_rentals"]:
                     skip_addresses = set()
                     if o["skip_recent"]:
-                        skip_addresses = get_recently_typed_addresses(conn, o["skip_recent"])
+                        skip_addresses = get_recently_typed_addresses(
+                            conn, o["skip_recent"]
+                        )
                         if skip_addresses:
-                            print(f"[*] Skipping {len(skip_addresses)} rentals typed in the last {o['skip_recent']} day(s)")
+                            print(
+                                f"[*] Skipping {len(skip_addresses)} rentals typed in the last {o['skip_recent']} day(s)"
+                            )
                         load_enrichment_data(conn, rent_props)
-                    rent_props = scraper.enrich_and_filter_rentals(rent_props, skip_addresses=skip_addresses, on_enrich=save_enriched)
+                    rent_props = scraper.enrich_and_filter_rentals(
+                        rent_props,
+                        skip_addresses=skip_addresses,
+                        on_enrich=save_enriched,
+                    )
                 print(f"Saved {len(rent_props)} rental listings")
 
     stats = get_stats(conn)
-    print(f"\nDatabase totals: {stats['total']} properties ({stats['for_sale']} sale, {stats['for_rent']} rent)")
+    print(
+        f"\nDatabase totals: {stats['total']} properties ({stats['for_sale']} sale, {stats['for_rent']} rent)"
+    )
     conn.close()
 
 
@@ -83,18 +126,22 @@ def _load_config_blacklist(config: dict, conn=None) -> list[str]:
     conn is provided). Unresolvable row IDs are warned and skipped.
     """
     addresses = []
-    for entry in (config.get("blacklist") or []):
+    for entry in config.get("blacklist") or []:
         if entry is None:
             continue
         if isinstance(entry, int):
             if conn is None:
-                print(f"[WARN] Cannot resolve blacklist row ID {entry} without a DB connection — skipped")
+                print(
+                    f"[WARN] Cannot resolve blacklist row ID {entry} without a DB connection — skipped"
+                )
                 continue
             addr = get_address_by_rowid(conn, entry)
             if addr:
                 addresses.append(addr)
             else:
-                print(f"[WARN] No property found for blacklist row ID {entry} — skipped")
+                print(
+                    f"[WARN] No property found for blacklist row ID {entry} — skipped"
+                )
         else:
             addresses.append(str(entry))
     return addresses
@@ -102,10 +149,13 @@ def _load_config_blacklist(config: dict, conn=None) -> list[str]:
 
 def _write_config_blacklist(addresses: list[str]):
     import yaml
+
     config = load_config()
     config["blacklist"] = addresses
     with open("config.yaml", "w") as f:
-        yaml.dump(config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        yaml.dump(
+            config, f, default_flow_style=False, allow_unicode=True, sort_keys=False
+        )
 
 
 def cmd_blacklist(args):
@@ -163,11 +213,11 @@ def cmd_stats(args):
     print(f"For sale:            {stats['for_sale']}")
     print(f"For rent:            {stats['for_rent']}")
     print(f"Distinct locations:  {stats['locations']}")
-    if stats['avg_sale_price']:
+    if stats["avg_sale_price"]:
         print(f"Avg sale price:      ${stats['avg_sale_price']:,.0f}")
-    if stats['avg_rent']:
+    if stats["avg_rent"]:
         print(f"Avg listed rent:     ${stats['avg_rent']:,.0f}/mo")
-    if stats['avg_rent_zestimate']:
+    if stats["avg_rent_zestimate"]:
         print(f"Avg rent zestimate:  ${stats['avg_rent_zestimate']:,.0f}/mo")
 
     conn.close()
@@ -213,9 +263,9 @@ def cmd_scrape_all(args):
     keys = list(searches.keys())
     print(f"Running {len(keys)} search(es): {', '.join(keys)}\n")
     for key in keys:
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         print(f"Search: {key}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         args.location = key
         cmd_scrape(args)
         print()
@@ -233,7 +283,14 @@ def cmd_chart(args):
     try:
         blacklist = _load_config_blacklist(config, conn)
         out = Path(args.output) if args.output else None
-        build(conn, args.zip, model=args.model, blacklist=blacklist, output_path=out, open_browser=not args.no_browser)
+        build(
+            conn,
+            args.zip,
+            model=args.model,
+            blacklist=blacklist,
+            output_path=out,
+            open_browser=not args.no_browser,
+        )
     finally:
         conn.close()
 
@@ -253,7 +310,8 @@ def cmd_margin_chart(args):
         blacklist = _load_config_blacklist(config, conn)
         out = Path(args.output) if args.output else None
         build_margin(
-            conn, args.zip,
+            conn,
+            args.zip,
             model=args.model,
             down_pct=o["down"] / 100,
             rate=o["rate"] / 100,
@@ -282,9 +340,160 @@ def cmd_analyze_rents(args):
     try:
         summary = run_model(conn)
         model_tag = summary.get("model", "knn_v1" if args.algo == "knn" else args.model)
-        print(f"\nAlgo '{args.algo}': trained on {summary['trained_on']} rentals, "
-              f"MAE ${summary['mae']:,.0f}/mo, R² {summary['r2']:.3f}, "
-              f"{summary['predicted']} sale listings estimated.")
+        print(
+            f"\nAlgo '{args.algo}': trained on {summary['trained_on']} rentals, "
+            f"MAE ${summary['mae']:,.0f}/mo, R² {summary['r2']:.3f}, "
+            f"{summary['predicted']} sale listings estimated."
+        )
+    finally:
+        conn.close()
+
+
+def cmd_enviroscreen(args):
+    """EnviroScreen subcommands: load, match, query, stats."""
+    conn = get_connection()
+    init_db(conn)
+    init_enviroscreen_tables(conn)
+
+    try:
+        if args.action == "load":
+            from pathlib import Path
+
+            csv_path = Path(args.csv) if args.csv else None
+            n = load_enviroscreen_csv(conn, csv_path=csv_path)
+            stats = get_enviroscreen_stats(conn)
+            print(f"Loaded {n} census tracts into enviroscreen_tracts")
+            print(f"  DI communities: {stats['di_tracts']}")
+            print(f"  CI communities: {stats['ci_tracts']}")
+
+        elif args.action == "match":
+            print("Geocoding properties to census tracts via Census Bureau API...")
+            print("(~0.25s per property to respect rate limits)\n")
+            result = match_properties_to_tracts(
+                conn,
+                skip_matched=not args.rematch,
+                delay=0.25,
+            )
+            print(
+                f"\nDone: {result['matched']} matched, "
+                f"{result['skipped']} outside CO, "
+                f"{result['failed']} failed, "
+                f"{result['total']} total"
+            )
+
+        elif args.action == "query":
+            rows = query_di_ci_properties(
+                conn,
+                max_price=args.max_price,
+                min_price=args.min_price,
+                listing_type=args.type,
+                di_only=args.di,
+                ci_only=args.ci,
+                county=args.county,
+                zipcode=args.zipcode,
+            )
+
+            if not rows:
+                print("No matching properties found.")
+                return
+
+            print(f"\n{'=' * 90}")
+            label = "DI" if args.di else ("CI" if args.ci else "DI/CI")
+            budget = ""
+            if args.min_price and args.max_price:
+                budget = f" (${args.min_price:,.0f}–${args.max_price:,.0f})"
+            elif args.max_price:
+                budget = f" (up to ${args.max_price:,.0f})"
+            elif args.min_price:
+                budget = f" (${args.min_price:,.0f}+)"
+            print(
+                f"  {len(rows)} {args.type or 'all'} properties in {label} communities{budget}"
+            )
+            print(f"{'=' * 90}\n")
+
+            for r in rows:
+                es = r["enviroscreen_percentile"] or 0
+                di_flag = "DI" if r["di_community"] else ""
+                ci_flag = "CI" if r["ci_community"] else ""
+                flags = "/".join(f for f in [di_flag, ci_flag] if f)
+
+                print(
+                    f"  #{r['property_rowid']:>4d}  ${r['price']:>10,.0f}  "
+                    f"{r['bedrooms'] or '?'}bd/{r['bathrooms'] or '?'}ba  "
+                    f"{r['sqft'] or '?':>5} sqft  "
+                    f"ES:{es:5.1f}%  [{flags:>5s}]"
+                )
+                print(f"         {r['address']}")
+                print(
+                    f"         {r['city']}, {r['state']} {r['zipcode']}  "
+                    f"| Tract {r['census_tract_geoid']} ({r['tract_county']})"
+                )
+
+                # Show key enviroscreen highlights
+                highlights = []
+                if r.get("lead_exposure_pctl") and r["lead_exposure_pctl"] >= 75:
+                    highlights.append(f"Lead:{r['lead_exposure_pctl']:.0f}%")
+                if r.get("air_toxics_pctl") and r["air_toxics_pctl"] >= 75:
+                    highlights.append(f"AirTox:{r['air_toxics_pctl']:.0f}%")
+                if r.get("ozone_pctl") and r["ozone_pctl"] >= 75:
+                    highlights.append(f"Ozone:{r['ozone_pctl']:.0f}%")
+                if r.get("fine_particle_pctl") and r["fine_particle_pctl"] >= 75:
+                    highlights.append(f"PM2.5:{r['fine_particle_pctl']:.0f}%")
+                if r.get("noise_pctl") and r["noise_pctl"] >= 75:
+                    highlights.append(f"Noise:{r['noise_pctl']:.0f}%")
+                if r.get("life_expectancy_years"):
+                    highlights.append(f"LifeExp:{r['life_expectancy_years']:.1f}yr")
+                if r.get("low_income") is not None:
+                    highlights.append(f"LowInc:{r['low_income'] * 100:.0f}%")
+                if highlights:
+                    print(f"         Env: {', '.join(highlights)}")
+
+                if r.get("rent_zestimate"):
+                    print(f"         Rent Zestimate: ${r['rent_zestimate']:,.0f}/mo")
+                print()
+
+            # Export hint
+            if len(rows) > 10:
+                print(f"  (Tip: pipe to `less` or use `enviroscreen export` for CSV)")
+
+        elif args.action == "stats":
+            stats = get_enviroscreen_stats(conn)
+            if not stats.get("total_tracts"):
+                print(
+                    "No EnviroScreen data loaded. Run: python main.py enviroscreen load"
+                )
+                return
+            print(f"\n--- EnviroScreen Statistics ---")
+            print(f"Census tracts loaded:    {stats['total_tracts']}")
+            print(f"DI communities:          {stats['di_tracts']}")
+            print(f"CI communities:          {stats['ci_tracts']}")
+            print(f"Avg ES percentile:       {stats['avg_percentile']}")
+            print(f"Properties matched:      {stats['matched_properties']}")
+
+        elif args.action == "export":
+            import csv as csv_mod
+
+            rows = query_di_ci_properties(
+                conn,
+                max_price=args.max_price,
+                min_price=args.min_price,
+                listing_type=args.type,
+                di_only=args.di,
+                ci_only=args.ci,
+                county=args.county,
+                zipcode=args.zipcode,
+            )
+            if not rows:
+                print("No matching properties found.")
+                return
+
+            output = args.output or "enviroscreen_export.csv"
+            with open(output, "w", newline="") as f:
+                writer = csv_mod.DictWriter(f, fieldnames=rows[0].keys())
+                writer.writeheader()
+                writer.writerows(rows)
+            print(f"Exported {len(rows)} properties to {output}")
+
     finally:
         conn.close()
 
@@ -299,97 +508,205 @@ def main():
     p_scrape = subparsers.add_parser("scrape", help="Scrape Zillow listings")
     p_scrape.add_argument(
         "location",
-        help="Saved search name from config.yaml, a full Zillow URL, or a location slug (e.g. 'austin-tx')"
+        help="Saved search name from config.yaml, a full Zillow URL, or a location slug (e.g. 'austin-tx')",
     )
     p_scrape.add_argument(
-        "-t", "--type", choices=["sale", "rent", "both"], default=None,
-        help="Listing type to scrape — overrides config (default: both)"
+        "-t",
+        "--type",
+        choices=["sale", "rent", "both"],
+        default=None,
+        help="Listing type to scrape — overrides config (default: both)",
     )
     p_scrape.add_argument(
-        "-p", "--pages", type=int, default=None,
-        help="Max pages to scrape per listing type — overrides config (default: 5, Zillow caps at 20)"
+        "-p",
+        "--pages",
+        type=int,
+        default=None,
+        help="Max pages to scrape per listing type — overrides config (default: 5, Zillow caps at 20)",
     )
     p_scrape.add_argument(
-        "-e", "--enrich", action="store_true", default=None,
-        help="Fetch detail pages for sale listings to get rent Zestimates (slower)"
+        "-e",
+        "--enrich",
+        action="store_true",
+        default=None,
+        help="Fetch detail pages for sale listings to get rent Zestimates (slower)",
     )
     p_scrape.add_argument(
-        "--skip-recent", type=int, metavar="DAYS", default=None,
-        help="Skip enriching properties already updated within the last N days"
+        "--skip-recent",
+        type=int,
+        metavar="DAYS",
+        default=None,
+        help="Skip enriching properties already updated within the last N days",
     )
     p_scrape.add_argument(
-        "-f", "--filter-rentals", action="store_true", default=None,
-        help="Enrich rental listings to get property type and keep only SFH/duplexes"
+        "-f",
+        "--filter-rentals",
+        action="store_true",
+        default=None,
+        help="Enrich rental listings to get property type and keep only SFH/duplexes",
     )
     p_scrape.set_defaults(func=cmd_scrape)
 
     # --- scrape-all ---
-    p_scrape_all = subparsers.add_parser("scrape-all", help="Run all saved searches from config.yaml")
-    p_scrape_all.add_argument(
-        "-t", "--type", choices=["sale", "rent", "both"], default=None,
-        help="Override listing type for all searches"
+    p_scrape_all = subparsers.add_parser(
+        "scrape-all", help="Run all saved searches from config.yaml"
     )
     p_scrape_all.add_argument(
-        "-p", "--pages", type=int, default=None,
-        help="Override max pages for all searches"
+        "-t",
+        "--type",
+        choices=["sale", "rent", "both"],
+        default=None,
+        help="Override listing type for all searches",
     )
     p_scrape_all.add_argument(
-        "-e", "--enrich", action="store_true", default=None,
-        help="Override enrich setting for all searches"
+        "-p",
+        "--pages",
+        type=int,
+        default=None,
+        help="Override max pages for all searches",
     )
     p_scrape_all.add_argument(
-        "--skip-recent", type=int, metavar="DAYS", default=None,
-        help="Override skip-recent days for all searches"
+        "-e",
+        "--enrich",
+        action="store_true",
+        default=None,
+        help="Override enrich setting for all searches",
     )
     p_scrape_all.add_argument(
-        "-f", "--filter-rentals", action="store_true", default=None,
-        help="Override filter-rentals setting for all searches"
+        "--skip-recent",
+        type=int,
+        metavar="DAYS",
+        default=None,
+        help="Override skip-recent days for all searches",
+    )
+    p_scrape_all.add_argument(
+        "-f",
+        "--filter-rentals",
+        action="store_true",
+        default=None,
+        help="Override filter-rentals setting for all searches",
     )
     p_scrape_all.set_defaults(func=cmd_scrape_all)
 
     # --- analyze-rents ---
-    p_ar = subparsers.add_parser("analyze-rents", help="Estimate rent for sale listings")
-    p_ar.add_argument("--algo", choices=["ols", "knn"], default="ols",
-                      help="Estimation algorithm: 'ols' (two-stage OLS, default) or 'knn' (weighted comps)")
-    p_ar.add_argument("--model", default="ols_v1", help="Model name tag in rent_estimates (default: ols_v1)")
+    p_ar = subparsers.add_parser(
+        "analyze-rents", help="Estimate rent for sale listings"
+    )
+    p_ar.add_argument(
+        "--algo",
+        choices=["ols", "knn"],
+        default="ols",
+        help="Estimation algorithm: 'ols' (two-stage OLS, default) or 'knn' (weighted comps)",
+    )
+    p_ar.add_argument(
+        "--model",
+        default="ols_v1",
+        help="Model name tag in rent_estimates (default: ols_v1)",
+    )
     p_ar.set_defaults(func=cmd_analyze_rents)
 
     # --- chart ---
-    p_chart = subparsers.add_parser("chart", help="Price vs. estimated rent scatter chart (Plotly HTML)")
-    p_chart.add_argument("--zip", nargs="+", required=True, metavar="ZIPCODE",
-                         help="One or more zip codes to include")
-    p_chart.add_argument("--model", default="ols_v1", help="Which rent_estimates model to plot (default: ols_v1)")
-    p_chart.add_argument("-o", "--output", default=None, help="Output HTML file path (default: data/charts/...)")
-    p_chart.add_argument("--no-browser", action="store_true", help="Save file without opening browser")
+    p_chart = subparsers.add_parser(
+        "chart", help="Price vs. estimated rent scatter chart (Plotly HTML)"
+    )
+    p_chart.add_argument(
+        "--zip",
+        nargs="+",
+        required=True,
+        metavar="ZIPCODE",
+        help="One or more zip codes to include",
+    )
+    p_chart.add_argument(
+        "--model",
+        default="ols_v1",
+        help="Which rent_estimates model to plot (default: ols_v1)",
+    )
+    p_chart.add_argument(
+        "-o",
+        "--output",
+        default=None,
+        help="Output HTML file path (default: data/charts/...)",
+    )
+    p_chart.add_argument(
+        "--no-browser", action="store_true", help="Save file without opening browser"
+    )
     p_chart.set_defaults(func=cmd_chart)
 
     # --- margin-chart ---
-    p_margin = subparsers.add_parser("margin-chart", help="Cash-flow margin chart: rent minus mortgage+HOA+tax+ins")
-    p_margin.add_argument("--zip", nargs="+", required=True, metavar="ZIPCODE",
-                          help="One or more zip codes to include")
-    p_margin.add_argument("--model", default="ols_v1", help="Which rent_estimates model to use (default: ols_v1)")
-    p_margin.add_argument("--down", type=float, default=None, metavar="PCT",
-                          help="Down payment %% (overrides config.yaml chart.down)")
-    p_margin.add_argument("--rate", type=float, default=None, metavar="PCT",
-                          help="Annual mortgage interest rate %% (overrides config.yaml chart.rate)")
-    p_margin.add_argument("--years", type=int, default=None,
-                          help="Loan term in years (overrides config.yaml chart.years)")
-    p_margin.add_argument("--tax-rate", type=float, default=None, metavar="PCT",
-                          help="Fallback annual property tax as %% of price (overrides config.yaml chart.tax_rate)")
-    p_margin.add_argument("--insurance-rate", type=float, default=None, metavar="PCT",
-                          help="Fallback annual insurance as %% of price (overrides config.yaml chart.insurance_rate)")
-    p_margin.add_argument("-o", "--output", default=None, help="Output HTML file path (default: data/charts/...)")
-    p_margin.add_argument("--no-browser", action="store_true", help="Save file without opening browser")
+    p_margin = subparsers.add_parser(
+        "margin-chart", help="Cash-flow margin chart: rent minus mortgage+HOA+tax+ins"
+    )
+    p_margin.add_argument(
+        "--zip",
+        nargs="+",
+        required=True,
+        metavar="ZIPCODE",
+        help="One or more zip codes to include",
+    )
+    p_margin.add_argument(
+        "--model",
+        default="ols_v1",
+        help="Which rent_estimates model to use (default: ols_v1)",
+    )
+    p_margin.add_argument(
+        "--down",
+        type=float,
+        default=None,
+        metavar="PCT",
+        help="Down payment %% (overrides config.yaml chart.down)",
+    )
+    p_margin.add_argument(
+        "--rate",
+        type=float,
+        default=None,
+        metavar="PCT",
+        help="Annual mortgage interest rate %% (overrides config.yaml chart.rate)",
+    )
+    p_margin.add_argument(
+        "--years",
+        type=int,
+        default=None,
+        help="Loan term in years (overrides config.yaml chart.years)",
+    )
+    p_margin.add_argument(
+        "--tax-rate",
+        type=float,
+        default=None,
+        metavar="PCT",
+        help="Fallback annual property tax as %% of price (overrides config.yaml chart.tax_rate)",
+    )
+    p_margin.add_argument(
+        "--insurance-rate",
+        type=float,
+        default=None,
+        metavar="PCT",
+        help="Fallback annual insurance as %% of price (overrides config.yaml chart.insurance_rate)",
+    )
+    p_margin.add_argument(
+        "-o",
+        "--output",
+        default=None,
+        help="Output HTML file path (default: data/charts/...)",
+    )
+    p_margin.add_argument(
+        "--no-browser", action="store_true", help="Save file without opening browser"
+    )
     p_margin.set_defaults(func=cmd_margin_chart)
 
     # --- blacklist ---
-    p_bl = subparsers.add_parser("blacklist", help="Manage the property blacklist in config.yaml")
+    p_bl = subparsers.add_parser(
+        "blacklist", help="Manage the property blacklist in config.yaml"
+    )
     bl_sub = p_bl.add_subparsers(dest="action", required=True)
 
-    bl_add = bl_sub.add_parser("add", help="Blacklist a property by its row ID (shown in chart hover)")
+    bl_add = bl_sub.add_parser(
+        "add", help="Blacklist a property by its row ID (shown in chart hover)"
+    )
     bl_add.add_argument("rowid", help="SQLite row ID of the property to blacklist")
 
-    bl_rm = bl_sub.add_parser("remove", help="Remove an entry from the blacklist by address fragment")
+    bl_rm = bl_sub.add_parser(
+        "remove", help="Remove an entry from the blacklist by address fragment"
+    )
     bl_rm.add_argument("address", help="Address string (or substring) to remove")
 
     bl_sub.add_parser("list", help="Show all blacklisted addresses")
@@ -403,11 +720,117 @@ def main():
 
     # --- export ---
     p_export = subparsers.add_parser("export", help="Export properties to CSV")
-    p_export.add_argument("-o", "--output", help="Output file path (default: export.csv)")
-    p_export.add_argument("-t", "--type", choices=["sale", "rent"], help="Filter by listing type")
+    p_export.add_argument(
+        "-o", "--output", help="Output file path (default: export.csv)"
+    )
+    p_export.add_argument(
+        "-t", "--type", choices=["sale", "rent"], help="Filter by listing type"
+    )
     p_export.add_argument("--city", help="Filter by city name")
     p_export.add_argument("--zipcode", help="Filter by zip code")
     p_export.set_defaults(func=cmd_export)
+
+    # --- enviroscreen ---
+    p_es = subparsers.add_parser(
+        "enviroscreen",
+        help="CDPHE EnviroScreen: load data, match properties, query DI/CI communities",
+    )
+    es_sub = p_es.add_subparsers(dest="action", required=True)
+
+    # enviroscreen load
+    es_load = es_sub.add_parser(
+        "load", help="Load EnviroScreen census tract data from CSV into the DB"
+    )
+    es_load.add_argument(
+        "--csv",
+        default=None,
+        help="Path to EnviroScreen CSV (default: data/enviroscreen_tract.csv)",
+    )
+
+    # enviroscreen match
+    es_match = es_sub.add_parser(
+        "match",
+        help="Geocode properties to census tracts via Census Bureau API",
+    )
+    es_match.add_argument(
+        "--rematch",
+        action="store_true",
+        help="Re-geocode all properties (default: skip already-matched)",
+    )
+
+    # enviroscreen query
+    es_query = es_sub.add_parser(
+        "query",
+        help="Find properties in DI/CI communities by budget",
+    )
+    es_query.add_argument(
+        "--max-price",
+        type=float,
+        metavar="PRICE",
+        help="Maximum property price (e.g. 450000)",
+    )
+    es_query.add_argument(
+        "--min-price",
+        type=float,
+        metavar="PRICE",
+        help="Minimum property price",
+    )
+    es_query.add_argument(
+        "-t",
+        "--type",
+        choices=["sale", "rent"],
+        default="sale",
+        help="Listing type (default: sale)",
+    )
+    es_query.add_argument(
+        "--di",
+        action="store_true",
+        help="Show only Disproportionately Impacted communities (>= 80th pctl)",
+    )
+    es_query.add_argument(
+        "--ci",
+        action="store_true",
+        help="Show only Cumulatively Impacted communities (>= 75th pctl)",
+    )
+    es_query.add_argument("--county", help="Filter by county name")
+    es_query.add_argument("--zipcode", help="Filter by zip code")
+
+    # enviroscreen export
+    es_export = es_sub.add_parser("export", help="Export DI/CI query results to CSV")
+    es_export.add_argument(
+        "-o",
+        "--output",
+        default=None,
+        help="Output file path (default: enviroscreen_export.csv)",
+    )
+    es_export.add_argument(
+        "--max-price",
+        type=float,
+        metavar="PRICE",
+        help="Maximum property price",
+    )
+    es_export.add_argument(
+        "--min-price",
+        type=float,
+        metavar="PRICE",
+        help="Minimum property price",
+    )
+    es_export.add_argument(
+        "-t",
+        "--type",
+        choices=["sale", "rent"],
+        default="sale",
+        help="Listing type (default: sale)",
+    )
+    es_export.add_argument("--di", action="store_true", help="DI only")
+    es_export.add_argument("--ci", action="store_true", help="CI only")
+    es_export.add_argument("--county", help="Filter by county")
+    es_export.add_argument("--zipcode", help="Filter by zip code")
+
+    # enviroscreen stats
+    es_sub.add_parser("stats", help="Show EnviroScreen data summary")
+
+    p_es.set_defaults(func=cmd_enviroscreen)
 
     args = parser.parse_args()
     args.func(args)

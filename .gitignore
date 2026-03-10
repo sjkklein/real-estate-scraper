@@ -1,7 +1,9 @@
 # Scraped data
-data/
+data/*
+!data/enviroscreen_tract.csv
 data/raw/
 export.csv
+enviroscreen_export.csv
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
