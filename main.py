@@ -277,14 +277,19 @@ def cmd_analyze_rents(args):
     else:
         from analysis.rent_model import run as run_model
 
+    config = load_config()
+    manual_properties = config.get("manual_properties") or []
+
     conn = get_connection()
     init_db(conn)
     try:
-        summary = run_model(conn)
+        summary = run_model(conn, manual_properties=manual_properties)
         model_tag = summary.get("model", "knn_v1" if args.algo == "knn" else args.model)
+        n_manual = summary.get("manual", 0)
+        manual_str = f", {n_manual} manual multifamily estimated" if n_manual else ""
         print(f"\nAlgo '{args.algo}': trained on {summary['trained_on']} rentals, "
               f"MAE ${summary['mae']:,.0f}/mo, R² {summary['r2']:.3f}, "
-              f"{summary['predicted']} sale listings estimated.")
+              f"{summary['predicted']} sale listings estimated{manual_str}.")
     finally:
         conn.close()
 

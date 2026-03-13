@@ -146,7 +146,7 @@ def _load_sale_listings(conn: sqlite3.Connection) -> pd.DataFrame:
     )
 
 
-def run(conn: sqlite3.Connection) -> dict:
+def run(conn: sqlite3.Connection, manual_properties=None) -> dict:
     """Estimate rent for all sale listings using KNN comps.
 
     Returns a summary dict with model stats.

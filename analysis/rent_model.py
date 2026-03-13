@@ -146,7 +146,109 @@ def _load_sale_listings(conn: sqlite3.Connection) -> pd.DataFrame:
     )
 
 
-def run(conn: sqlite3.Connection) -> dict:
+def _estimate_manual_properties(
+    conn: sqlite3.Connection,
+    manual_props: list[dict],
+    model,
+    zip_medians: pd.DataFrame,
+    zip_median_map: dict,
+    rentals: pd.DataFrame,
+    global_median: float,
+) -> int:
+    """Estimate total rent for manually configured multifamily properties.
+
+    Each entry in manual_props should have:
+      label, zipcode, sale_price, units (list of {sqft, bedrooms, bathrooms})
+    and optionally: address, city, state, property_type.
+
+    Estimates rent for each unit independently using the trained OLS model,
+    sums them, and stores the total in rent_estimates under MODEL_NAME.
+    Returns the number of properties saved.
+    """
+    import hashlib
+    from analysis.db import upsert_rent_estimate
+
+    if not manual_props:
+        return 0
+
+    saved = 0
+    for prop_cfg in manual_props:
+        label = str(prop_cfg.get("label") or prop_cfg.get("address") or "unknown")
+        units = prop_cfg.get("units") or []
+        if not units:
+            print(f"[WARN] manual property '{label}' has no units — skipped")
+            continue
+
+        zipcode = str(prop_cfg.get("zipcode", "")).strip()
+
+        # Get zip median for this property's location
+        if zipcode and zipcode in zip_median_map:
+            zm = zip_median_map[zipcode]["zip_median"]
+            n_comps = zip_median_map[zipcode]["n_comps"]
+        else:
+            zm = global_median
+            n_comps = len(rentals)
+            if zipcode:
+                print(f"[WARN] No zip data for '{label}' (zip: {zipcode}) — using global median ${global_median:,.0f}")
+
+        # Estimate rent for each unit and sum
+        unit_estimates = []
+        for i, unit in enumerate(units):
+            sqft = unit.get("sqft", 0)
+            bedrooms = unit.get("bedrooms", 0)
+            if sqft <= 0:
+                print(f"[WARN] Unit {i + 1} of '{label}' missing sqft — skipped")
+                continue
+            log_sqft = np.log(max(sqft, 1))
+            x = np.array([[log_sqft, bedrooms]])
+            log_ratio = float(model.predict(x)[0])
+            est = zm * np.exp(log_ratio)
+            est = max(global_median * 0.3, min(est, global_median * 4))
+            unit_estimates.append(est)
+
+        if not unit_estimates:
+            continue
+
+        total_rent = sum(unit_estimates)
+        unit_str = " + ".join(f"${e:,.0f}" for e in unit_estimates)
+        print(f"[*] Manual '{label}': {len(unit_estimates)} units = {unit_str} = ${total_rent:,.0f}/mo total")
+
+        # Stable synthetic zpid based on label
+        zpid = "manual_" + hashlib.md5(label.encode()).hexdigest()[:10]
+
+        # Ensure property exists in the properties table so FK constraint is satisfied
+        sale_price = prop_cfg.get("sale_price")
+        address = prop_cfg.get("address") or label
+        city = prop_cfg.get("city", "")
+        state = prop_cfg.get("state", "")
+        prop_type = prop_cfg.get("property_type", "MULTI_FAMILY")
+        total_sqft = sum(u.get("sqft", 0) for u in units)
+        total_beds = sum(u.get("bedrooms", 0) for u in units)
+        total_baths = sum(float(u.get("bathrooms", 0)) for u in units)
+
+        conn.execute(
+            """INSERT INTO properties
+                   (zpid, address, city, state, zipcode, price, sqft,
+                    bedrooms, bathrooms, property_type, listing_type, search_name)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'sale', 'manual')
+               ON CONFLICT(zpid) DO UPDATE SET
+                   price        = excluded.price,
+                   sqft         = excluded.sqft,
+                   bedrooms     = excluded.bedrooms,
+                   bathrooms    = excluded.bathrooms,
+                   property_type = excluded.property_type,
+                   updated_at   = datetime('now')""",
+            (zpid, address, city, state, zipcode, sale_price,
+             total_sqft, total_beds, total_baths, prop_type),
+        )
+        upsert_rent_estimate(conn, zpid, MODEL_NAME, round(total_rent, 2), n_comps)
+        saved += 1
+
+    conn.commit()
+    return saved
+
+
+def run(conn: sqlite3.Connection, manual_properties: Optional[list] = None) -> dict:
     """Train OLS on rentals, predict for all qualifying sale listings.
 
     Returns a summary dict with model stats.
@@ -241,4 +343,8 @@ def run(conn: sqlite3.Connection) -> dict:
     conn.commit()
     print(f"[*] Saved {saved} rent estimates ({skipped} skipped) under model '{MODEL_NAME}'.")
 
-    return {"trained_on": len(rentals), "mae": mae, "r2": r2, "predicted": saved}
+    n_manual = _estimate_manual_properties(
+        conn, manual_properties or [], model, zip_medians, zip_median_map, rentals, global_median
+    )
+
+    return {"trained_on": len(rentals), "mae": mae, "r2": r2, "predicted": saved, "manual": n_manual}

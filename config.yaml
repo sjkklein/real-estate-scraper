@@ -46,6 +46,56 @@ chart:
   tax_rate: 0.4     # fallback: annual property tax as % of price
   insurance_rate: 0.5  # fallback: annual homeowners insurance as % of price
 
+# Manually entered multifamily properties for rent estimation.
+# These are processed by 'analyze-rents' — the model estimates rent for each
+# unit independently, then sums them to get the total projected rent.
+# Each entry is inserted into the database with a synthetic ID so it appears
+# in charts like any other sale listing.
+#
+# Required per entry:
+#   label       unique name (used as stable ID — don't change once set)
+#   zipcode     used to look up the local rent baseline
+#   sale_price  asking price (shown on the price axis in charts)
+#   units       list of units; each needs sqft and bedrooms
+#
+# Optional:
+#   address, city, state, property_type (default: MULTI_FAMILY)
+#   bathrooms per unit
+#
+# Example:
+#
+# manual_properties:
+#   - label: "123 Main St Duplex"
+#     address: "123 Main St, Colorado Springs, CO 80904"
+#     zipcode: "80904"
+#     city: Colorado Springs
+#     state: CO
+#     sale_price: 385000
+#     property_type: DUPLEX
+#     units:
+#       - sqft: 950
+#         bedrooms: 2
+#         bathrooms: 1
+#       - sqft: 700
+#         bedrooms: 1
+#         bathrooms: 1
+#
+#   - label: "456 Oak Ave Triplex"
+#     zipcode: "80903"
+#     sale_price: 520000
+#     units:
+#       - sqft: 800
+#         bedrooms: 2
+#         bathrooms: 1
+#       - sqft: 800
+#         bedrooms: 2
+#         bathrooms: 1
+#       - sqft: 500
+#         bedrooms: 1
+#         bathrooms: 1
+
+# manual_properties:
+
 # Addresses to exclude from all charts.
 #   python main.py blacklist add <row-id>        (row ID shown in chart hover)
 #   python main.py blacklist remove <fragment>
@@ -90,3 +140,19 @@ searches:
       pages: 20
       enrich: true
       #skip_recent: 7
+
+manual_properties:
+  - label: "154 el paso"
+    address: "154 el paso St, Colorado Springs, CO 80904"
+    zipcode: "80829"
+    city: Colorado Springs
+    state: CO
+    sale_price: 425000
+    property_type: DUPLEX
+    units:
+      - sqft: 800
+        bedrooms: 2
+        bathrooms: 1
+      - sqft: 670
+        bedrooms: 2
+        bathrooms: 1
